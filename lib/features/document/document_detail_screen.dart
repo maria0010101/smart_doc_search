@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
@@ -84,6 +85,125 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     }
   }
 
+  Future<void> _openOriginalFile([int? pageIndex]) async {
+    if (_document == null) return;
+    final ok = await widget.repository.openFile(_document!.filePath);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('系統未安裝第三方外部閱讀器，已自動為您切換至內建高解析版面檢視器'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      if (_pages.isNotEmpty) {
+        _showFullscreenPageViewer(pageIndex ?? 0);
+      }
+    }
+  }
+
+  void _showFullscreenPageViewer(int initialIndex) {
+    if (_pages.isEmpty) return;
+    final validIndex = (initialIndex >= 0 && initialIndex < _pages.length) ? initialIndex : 0;
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) {
+        int currentPage = validIndex;
+        final pageCtrl = PageController(initialPage: validIndex);
+        return StatefulBuilder(
+          builder: (context, setViewerState) {
+            final page = _pages[currentPage];
+            return Dialog.fullscreen(
+              child: Scaffold(
+                appBar: AppBar(
+                  title: Text('${_document?.title ?? "文獻"} (${currentPage + 1}/${_pages.length})'),
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.open_in_new),
+                      tooltip: '以系統外部程式開啟原始檔案',
+                      onPressed: () => _openOriginalFile(currentPage),
+                    ),
+                  ],
+                ),
+                body: Column(
+                  children: [
+                    Expanded(
+                      child: PageView.builder(
+                        controller: pageCtrl,
+                        itemCount: _pages.length,
+                        onPageChanged: (idx) {
+                          setViewerState(() => currentPage = idx);
+                        },
+                        itemBuilder: (context, idx) {
+                          final p = _pages[idx];
+                          final hasImg = p.imagePath.isNotEmpty && File(p.imagePath).existsSync();
+                          if (hasImg) {
+                            return InteractiveViewer(
+                              minScale: 0.5,
+                              maxScale: 5.0,
+                              child: Center(
+                                child: Image.file(File(p.imagePath), fit: BoxFit.contain),
+                              ),
+                            );
+                          } else {
+                            return Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: SingleChildScrollView(
+                                  child: Text(
+                                    p.ocrText.isEmpty ? '本頁暫無影像或辨識內容' : p.ocrText,
+                                    style: const TextStyle(fontSize: 14, height: 1.6),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.chevron_left),
+                            tooltip: '上一頁',
+                            onPressed: currentPage > 0
+                                ? () => pageCtrl.previousPage(
+                                      duration: const Duration(milliseconds: 250),
+                                      curve: Curves.easeInOut,
+                                    )
+                                : null,
+                          ),
+                          Text(
+                            '第 ${page.pageNumber} 頁 • 雙指縮放檢視原始版面細節',
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.chevron_right),
+                            tooltip: '下一頁',
+                            onPressed: currentPage < _pages.length - 1
+                                ? () => pageCtrl.nextPage(
+                                      duration: const Duration(milliseconds: 250),
+                                      curve: Curves.easeInOut,
+                                    )
+                                : null,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _toggleTagVerified(TagItem tag) async {
     if (_document == null) return;
     final updatedTags = _document!.tags.map((t) {
@@ -114,7 +234,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
 
   Future<void> _showAddTagDialog() async {
     String tagName = '';
-    String category = '主題';
+    String category = '醫學術語';
 
     await showDialog(
       context: context,
@@ -122,22 +242,35 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('新增自訂標籤'),
+              title: const Text('新增結構化標籤'),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   TextField(
                     autofocus: true,
-                    decoration: const InputDecoration(labelText: '標籤名稱', hintText: '例：機器學習'),
+                    decoration: const InputDecoration(
+                      labelText: '標籤名稱',
+                      hintText: '例：第2型糖尿病 / E11 / 胰島素阻抗',
+                    ),
                     onChanged: (val) => tagName = val.trim(),
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     initialValue: category,
                     decoration: const InputDecoration(labelText: '標籤維度'),
-                    items: ['主題', '領域', '方法', '對象', '結論', '文檔類型', '年份', '作者/機構']
-                        .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                        .toList(),
+                    items: [
+                      '醫學術語',
+                      '疾病/症狀',
+                      '疾病分類編碼',
+                      '主題',
+                      '領域',
+                      '方法',
+                      '對象',
+                      '結論',
+                      '文檔類型',
+                      '年份',
+                      '作者/機構',
+                    ].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                     onChanged: (val) {
                       if (val != null) setDialogState(() => category = val);
                     },
@@ -181,21 +314,21 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     }
   }
 
-  Future<void> _reTagWithOllama() async {
+  Future<void> _reAnalyzeWithAi() async {
     if (_document == null) return;
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const Center(
+      builder: (_) => Center(
         child: Card(
           child: Padding(
-            padding: EdgeInsets.all(20),
+            padding: const EdgeInsets.all(20),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                CircularProgressIndicator(),
-                SizedBox(width: 16),
-                Text('呼叫 Ollama 重新生成標籤...'),
+                const CircularProgressIndicator(),
+                const SizedBox(width: 16),
+                Text('呼叫 ${widget.ollamaClient.providerDisplayName} 深度分析中...'),
               ],
             ),
           ),
@@ -205,7 +338,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
 
     try {
       final allText = _pages.map((p) => p.ocrText).join('\n');
-      final newTags = await widget.ollamaClient.generateTags(
+      final analysis = await widget.ollamaClient.generateAnalysis(
         text: '${_document!.title}\n$allText',
       );
 
@@ -213,27 +346,39 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
         Navigator.pop(context); // Close loading dialog
       }
 
-      if (newTags.isNotEmpty) {
+      if (analysis.tags.isNotEmpty || analysis.summary.isNotEmpty) {
         // Keep existing user-added tags
         final userTags = _document!.tags.where((t) => t.source == 'user').toList();
-        final combined = [...userTags, ...newTags];
+        final combinedTags = [...userTags, ...analysis.tags];
+
+        final updatedMetadata = Map<String, dynamic>.from(_document!.metadata);
+        if (analysis.chineseSummary.isNotEmpty) {
+          updatedMetadata['chineseSummary'] = analysis.chineseSummary;
+        }
 
         final updated = _document!.copyWith(
-          tags: combined,
+          tags: combinedTags,
+          summary: analysis.summary.isNotEmpty ? analysis.summary : _document!.summary,
+          language: analysis.detectedLanguage.isNotEmpty ? analysis.detectedLanguage : _document!.language,
+          metadata: updatedMetadata,
           updatedAt: DateTime.now().millisecondsSinceEpoch,
         );
+
         await widget.repository.updateDocument(updated);
         setState(() => _document = updated);
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('已成功生成 ${newTags.length} 個新標籤！')),
+            SnackBar(
+              content: Text('已透過 ${widget.ollamaClient.providerDisplayName} 成功更新醫學標籤與摘要！'),
+              backgroundColor: Colors.teal,
+            ),
           );
         }
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Ollama 未能解析標籤或無內容回應')),
+            const SnackBar(content: Text('AI 服務未能解析有效標籤或摘要內容')),
           );
         }
       }
@@ -241,7 +386,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('標籤生成失敗: $e')),
+          SnackBar(content: Text('AI 分析失敗: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -272,6 +417,14 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     }
   }
 
+  void _copyAllOcrText() {
+    final allOcr = _pages.map((p) => '【第 ${p.pageNumber} 頁】\n${p.ocrText}').join('\n\n');
+    Clipboard.setData(ClipboardData(text: allOcr));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已複製全部文字內容至剪貼簿')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -292,9 +445,14 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
         title: const Text('文獻詳情', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
           IconButton(
-            icon: const Icon(Icons.psychology_outlined),
-            tooltip: '重新呼叫 Ollama 生成標籤',
-            onPressed: _reTagWithOllama,
+            icon: const Icon(Icons.open_in_new),
+            tooltip: '直接開啟原始檔案',
+            onPressed: _openOriginalFile,
+          ),
+          IconButton(
+            icon: const Icon(Icons.auto_awesome_outlined),
+            tooltip: '重新呼叫 AI 生成摘要與醫學標籤',
+            onPressed: _reAnalyzeWithAi,
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline, color: Colors.red),
@@ -305,61 +463,491 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
         bottom: TabBar(
           controller: _tabController,
           tabs: const [
-            Tab(text: '標籤與元數據', icon: Icon(Icons.label_outline, size: 20)),
-            Tab(text: 'OCR 全文', icon: Icon(Icons.text_snippet_outlined, size: 20)),
+            Tab(text: '摘要與標籤內文', icon: Icon(Icons.description_outlined, size: 20)),
             Tab(text: '頁面版面', icon: Icon(Icons.auto_stories_outlined, size: 20)),
+            Tab(text: '檔案元數據', icon: Icon(Icons.info_outline, size: 20)),
           ],
         ),
       ),
       body: TabBarView(
         controller: _tabController,
         children: [
-          // Tab 1: Tags & Metadata
-          _buildTagsAndMetadataTab(doc, dateFormat),
+          // Tab 1: AI Summary, Medical Tags & Recognized Text Content
+          _buildSummaryAndRecognizedContentTab(doc),
 
-          // Tab 2: OCR Fulltext
-          _buildOcrTextTab(),
+          // Tab 2: Page Layout Blocks & Open Original File
+          _buildPagesLayoutTab(doc),
 
-          // Tab 3: Pages & Layout Blocks
-          _buildPagesLayoutTab(),
+          // Tab 3: Metadata
+          _buildMetadataTab(doc, dateFormat),
         ],
       ),
     );
   }
 
-  Widget _buildTagsAndMetadataTab(Document doc, DateFormat dateFormat) {
+  /// Tab 1: AI Summary at very top, followed by Medical/Structured Tags and Full Recognized Content
+  Widget _buildSummaryAndRecognizedContentTab(Document doc) {
+    final chineseSummary = (doc.metadata['chineseSummary'] ?? '').toString().trim();
+    final isEnglishDoc = doc.language.toLowerCase().startsWith('en') ||
+        (chineseSummary.isNotEmpty && chineseSummary != doc.summary);
+
     // Group tags by category
     final tagsByCategory = <String, List<TagItem>>{};
     for (final tag in doc.tags) {
       tagsByCategory.putIfAbsent(tag.category, () => []).add(tag);
     }
 
+    // Prioritized Medical Dimensions First
+    final sortedCategories = tagsByCategory.keys.toList()
+      ..sort((a, b) {
+        const priority = {'疾病/症狀': 0, '疾病分類編碼': 1, '醫學術語': 2, '主題': 3, '領域': 4, '方法': 5};
+        final pa = priority[a] ?? 10;
+        final pb = priority[b] ?? 10;
+        return pa.compareTo(pb);
+      });
+
+    final allOcrText = _pages.map((p) => '【第 ${p.pageNumber} 頁】\n${p.ocrText}').join('\n\n');
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // Editable Title Card
+        // 1. Prominent AI Executive Summary Card (置於最上方確認是否為查詢目標)
+        _buildAiSummaryCard(doc, chineseSummary, isEnglishDoc),
+
+        const SizedBox(height: 14),
+
+        // 2. Editable Document Title Card
         Card(
+          elevation: 1,
           child: Padding(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                const Icon(Icons.title, color: Colors.blueGrey, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _titleCtrl,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      hintText: '文獻標題',
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.check_circle, color: Colors.green),
+                  tooltip: '儲存標題',
+                  onPressed: _saveTitle,
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 14),
+
+        // 3. Medical & Structured Tags Card (醫學術語、疾病/症狀、疾病分類編碼等)
+        _buildMedicalTagsCard(doc, sortedCategories, tagsByCategory),
+
+        const SizedBox(height: 14),
+
+        // 4. Recognized Text Content (辨識後文字內容呈現)
+        _buildRecognizedTextSection(allOcrText),
+      ],
+    );
+  }
+
+  /// Prominent AI Summary Box at top
+  Widget _buildAiSummaryCard(Document doc, String chineseSummary, bool isEnglishDoc) {
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Colors.blue.withValues(alpha: 0.3), width: 1.5),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          gradient: LinearGradient(
+            colors: [
+              Colors.blue.withValues(alpha: 0.07),
+              Colors.purple.withValues(alpha: 0.04),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header with AI Provider Badge and Actions
+            Row(
+              children: [
+                const Icon(Icons.auto_awesome, color: Colors.amber, size: 22),
+                const SizedBox(width: 8),
+                const Text(
+                  'AI 智能文獻摘要',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    widget.ollamaClient.providerDisplayName,
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.indigo),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 10),
+
+            // Target Document Verification Guidance Banner
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.teal.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.track_changes, color: Colors.teal, size: 16),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '目標檢索確認：請閱讀下方摘要，快速判斷是否為您查詢之目標文獻。',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.teal),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // English Document -> Highlighted Chinese Summary Section (英文文獻增加中文摘要說明)
+            if (isEnglishDoc && chineseSummary.isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.amber.shade700.withValues(alpha: 0.4)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.translate, size: 16, color: Colors.amber.shade800),
+                        const SizedBox(width: 6),
+                        Text(
+                          '英文文獻中文摘要說明',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.amber.shade900,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      chineseSummary,
+                      style: const TextStyle(fontSize: 13, height: 1.6, fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // Full Executive Summary
+            if (doc.summary.isNotEmpty && doc.summary != chineseSummary) ...[
+              const Text(
+                '文獻核心主旨與重點：',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blueGrey),
+              ),
+              const SizedBox(height: 6),
+              SelectableText(
+                doc.summary,
+                style: const TextStyle(fontSize: 13, height: 1.6),
+              ),
+            ] else if (doc.summary.isNotEmpty && chineseSummary.isEmpty) ...[
+              SelectableText(
+                doc.summary,
+                style: const TextStyle(fontSize: 13, height: 1.6),
+              ),
+            ],
+
+            const SizedBox(height: 12),
+            const Divider(),
+
+            // Action row: Re-analyze or Open File
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('重新 AI 生成摘要與標籤', style: TextStyle(fontSize: 12)),
+                  onPressed: _reAnalyzeWithAi,
+                ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                  icon: const Icon(Icons.open_in_new, size: 16),
+                  label: const Text('開啟原始檔案', style: TextStyle(fontSize: 12)),
+                  onPressed: _openOriginalFile,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Medical & Structured Tags Card
+  Widget _buildMedicalTagsCard(
+    Document doc,
+    List<String> sortedCategories,
+    Map<String, List<TagItem>> tagsByCategory,
+  ) {
+    return Card(
+      elevation: 1,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.medical_services_outlined, color: Colors.teal, size: 20),
+                    SizedBox(width: 8),
+                    Text('醫學術語、疾病症狀與多維標籤', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  ],
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline, color: AppTheme.primaryColor),
+                  tooltip: '新增標籤',
+                  onPressed: _showAddTagDialog,
+                ),
+              ],
+            ),
+            const Divider(),
+            if (doc.tags.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('暫無標籤，可點擊上方按鈕手動新增或使用 AI 重新辨識。', style: TextStyle(color: Colors.grey)),
+              )
+            else
+              ...sortedCategories.map((category) {
+                final tags = tagsByCategory[category] ?? [];
+                final color = AppTheme.getCategoryColor(category);
+
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            category,
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: color),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            '(${tags.length})',
+                            style: const TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: tags.map((t) {
+                          return InputChip(
+                            label: Text('${t.name} (${(t.confidence * 100).toInt()}%)'),
+                            avatar: Icon(
+                              t.verified ? Icons.verified : Icons.help_outline,
+                              size: 16,
+                              color: t.verified ? Colors.blue : Colors.orange,
+                            ),
+                            selected: t.verified,
+                            onSelected: (_) => _toggleTagVerified(t),
+                            onDeleted: () => _deleteTag(t),
+                            tooltip: '點擊審核狀態（${t.verified ? '已審核' : '待審核'}）• 來源: ${t.source}',
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Recognized Text Content Section
+  Widget _buildRecognizedTextSection(String allOcrText) {
+    return Card(
+      elevation: 1,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.text_snippet_outlined, color: Colors.indigo, size: 20),
+                    SizedBox(width: 8),
+                    Text('辨識後文字內容 (OCR)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  ],
+                ),
+                TextButton.icon(
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text('複製全文', style: TextStyle(fontSize: 12)),
+                  onPressed: _copyAllOcrText,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // In-document Search Input
+            TextField(
+              controller: _inDocSearchCtrl,
+              decoration: InputDecoration(
+                hintText: '在辨識內文搜尋關鍵字或醫學術語...',
+                prefixIcon: const Icon(Icons.search, size: 18),
+                suffixIcon: _inDocSearchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 16),
+                        onPressed: () {
+                          _inDocSearchCtrl.clear();
+                          setState(() => _inDocSearchQuery = '');
+                        },
+                      )
+                    : null,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onChanged: (val) => setState(() => _inDocSearchQuery = val.trim()),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Extracted / Recognized text display
+            Container(
+              constraints: const BoxConstraints(maxHeight: 450),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
+              ),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  allOcrText.isEmpty ? '尚無文字識別內容' : allOcrText,
+                  style: const TextStyle(fontSize: 13, height: 1.6, fontFamily: 'monospace'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Tab 2: Page Layout Blocks & Direct Link to Open Original File (頁面版面直接連結開啟原始檔案)
+  Widget _buildPagesLayoutTab(Document doc) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        // Prominent Direct Link to Open Original File (頁面版面直接連結開啟原始檔案)
+        Card(
+          color: Colors.indigo.shade50.withValues(alpha: 0.1),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: Colors.indigo.withValues(alpha: 0.3)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('文獻標題', style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    const Icon(Icons.file_present, color: Colors.indigo, size: 28),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '原始檔案：${doc.title}',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '格式: ${doc.sourceType.toUpperCase()} • 頁數: ${doc.pageCount} 頁',
+                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
-                      child: TextField(
-                        controller: _titleCtrl,
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        decoration: const InputDecoration(border: InputBorder.none),
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.indigo,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text('直接開啟原始檔案 (外部閱讀器)', style: TextStyle(fontWeight: FontWeight.bold)),
+                        onPressed: () => _openOriginalFile(0),
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.check, color: Colors.green),
-                      tooltip: '儲存標題',
-                      onPressed: _saveTitle,
-                    ),
+                    if (_pages.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        icon: const Icon(Icons.fullscreen),
+                        label: const Text('全螢幕檢視'),
+                        onPressed: () => _showFullscreenPageViewer(0),
+                      ),
+                    ],
                   ],
                 ),
               ],
@@ -367,88 +955,177 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
           ),
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(height: 16),
 
-        // Tags Card
+        // Per-page Layout Analysis Cards
+        if (_pages.isEmpty)
+          const Center(child: Padding(padding: EdgeInsets.all(20), child: Text('無分頁版面資料')))
+        else
+          ..._pages.map((page) {
+            final hasImage = page.imagePath.isNotEmpty && File(page.imagePath).existsSync();
+            final pageIndex = _pages.indexOf(page);
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 16),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          '第 ${page.pageNumber} 頁版面',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                        Row(
+                          children: [
+                            TextButton.icon(
+                              icon: const Icon(Icons.fullscreen, size: 14),
+                              label: const Text('全螢幕', style: TextStyle(fontSize: 12)),
+                              onPressed: () => _showFullscreenPageViewer(pageIndex),
+                            ),
+                            TextButton.icon(
+                              icon: const Icon(Icons.open_in_new, size: 14),
+                              label: const Text('開啟原檔', style: TextStyle(fontSize: 12)),
+                              onPressed: () => _openOriginalFile(pageIndex),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+
+                    // Image Thumbnail if available (tap to open fullscreen viewer)
+                    if (hasImage) ...[
+                      InkWell(
+                        onTap: () => _showFullscreenPageViewer(pageIndex),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Stack(
+                          alignment: Alignment.bottomRight,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.file(
+                                File(page.imagePath),
+                                height: 220,
+                                width: double.infinity,
+                                fit: BoxFit.contain,
+                              ),
+                            ),
+                            Container(
+                              margin: const EdgeInsets.all(8),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.65),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.zoom_in, color: Colors.white, size: 14),
+                                  SizedBox(width: 4),
+                                  Text('點擊放大版面', style: TextStyle(color: Colors.white, fontSize: 11)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+
+                    // Layout Blocks Section
+                    const Text('版面結構分析區塊：', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                    const SizedBox(height: 6),
+                    if (page.layoutBlocks.isEmpty)
+                      Text(page.ocrText, style: const TextStyle(fontSize: 12, color: Colors.grey))
+                    else
+                      ...page.layoutBlocks.map((block) {
+                        Color typeColor = Colors.grey;
+                        if (block.type == 'title') typeColor = Colors.blue;
+                        if (block.type == 'table') typeColor = Colors.green;
+                        if (block.type == 'footer') typeColor = Colors.orange;
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: typeColor.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: typeColor.withValues(alpha: 0.2)),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                decoration: BoxDecoration(color: typeColor, borderRadius: BorderRadius.circular(4)),
+                                child: Text(
+                                  block.type.toUpperCase(),
+                                  style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  block.text,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                  ],
+                ),
+              ),
+            );
+          }),
+      ],
+    );
+  }
+
+  /// Tab 3: Metadata Tab
+  Widget _buildMetadataTab(Document doc, DateFormat dateFormat) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('多維結構化標籤 (AI / 人工審核)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    const Text('文獻元數據與檔案資訊', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                     IconButton(
-                      icon: const Icon(Icons.add_circle_outline, color: AppTheme.primaryColor),
-                      tooltip: '新增標籤',
-                      onPressed: _showAddTagDialog,
+                      icon: const Icon(Icons.open_in_new),
+                      tooltip: '開啟原始檔案',
+                      onPressed: _openOriginalFile,
                     ),
                   ],
                 ),
                 const Divider(),
-                if (doc.tags.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 12),
-                    child: Text('暫無標籤，可點擊上方按鈕手動新增或使用 Ollama AI 生成。', style: TextStyle(color: Colors.grey)),
-                  )
-                else
-                  ...tagsByCategory.entries.map((entry) {
-                    final category = entry.key;
-                    final tags = entry.value;
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(category, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppTheme.getCategoryColor(category))),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 6,
-                            children: tags.map((t) {
-                              return InputChip(
-                                label: Text('${t.name} (${(t.confidence * 100).toInt()}%)'),
-                                avatar: Icon(
-                                  t.verified ? Icons.verified : Icons.help_outline,
-                                  size: 16,
-                                  color: t.verified ? Colors.blue : Colors.orange,
-                                ),
-                                selected: t.verified,
-                                onSelected: (_) => _toggleTagVerified(t),
-                                onDeleted: () => _deleteTag(t),
-                                tooltip: '點擊切換審核狀態（${t.verified ? '已審核' : '待審核'}）• 來源: ${t.source}',
-                              );
-                            }).toList(),
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
-              ],
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 12),
-
-        // Metadata Card
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('文獻元數據', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                const Divider(),
                 _buildMetaRow('檔案格式', doc.sourceType.toUpperCase()),
-                _buildMetaRow('頁數', '${doc.pageCount} 頁'),
-                _buildMetaRow('語言', doc.language),
+                _buildMetaRow('總頁數', '${doc.pageCount} 頁'),
+                _buildMetaRow('語言識別', doc.language),
                 _buildMetaRow('匯入時間', dateFormat.format(DateTime.fromMillisecondsSinceEpoch(doc.createdAt))),
                 _buildMetaRow('最後更新', dateFormat.format(DateTime.fromMillisecondsSinceEpoch(doc.updatedAt))),
                 _buildMetaRow('SHA-256 查重碼', doc.fileHash.isNotEmpty ? doc.fileHash : '無'),
                 _buildMetaRow('原始檔案路徑', doc.filePath),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.file_open),
+                    label: const Text('以外部檢視器開啟原始檔案'),
+                    onPressed: _openOriginalFile,
+                  ),
+                ),
               ],
             ),
           ),
@@ -459,147 +1136,16 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
 
   Widget _buildMetaRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 100, child: Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey))),
-          Expanded(child: Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500))),
+          SizedBox(width: 110, child: Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey))),
+          Expanded(
+            child: SelectableText(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+          ),
         ],
       ),
-    );
-  }
-
-  Widget _buildOcrTextTab() {
-    final allOcr = _pages.map((p) => '【第 ${p.pageNumber} 頁】\n${p.ocrText}').join('\n\n');
-
-    return Column(
-      children: [
-        // In-document search bar
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: TextField(
-            controller: _inDocSearchCtrl,
-            decoration: InputDecoration(
-              hintText: '在此篇文獻內搜尋關鍵字...',
-              prefixIcon: const Icon(Icons.find_in_page),
-              suffixIcon: _inDocSearchQuery.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        _inDocSearchCtrl.clear();
-                        setState(() => _inDocSearchQuery = '');
-                      },
-                    )
-                  : null,
-              filled: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-            ),
-            onChanged: (val) => setState(() => _inDocSearchQuery = val.trim()),
-          ),
-        ),
-
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: SingleChildScrollView(
-              child: SelectableText(
-                allOcr.isEmpty ? '尚無文字識別內容' : allOcr,
-                style: const TextStyle(fontSize: 14, height: 1.6),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPagesLayoutTab() {
-    if (_pages.isEmpty) {
-      return const Center(child: Text('無分頁資料'));
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _pages.length,
-      itemBuilder: (context, index) {
-        final page = _pages[index];
-        final hasImage = page.imagePath.isNotEmpty && File(page.imagePath).existsSync();
-
-        return Card(
-          margin: const EdgeInsets.only(bottom: 16),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '第 ${page.pageNumber} 頁',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                const SizedBox(height: 8),
-
-                // Image Thumbnail if available
-                if (hasImage) ...[
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.file(
-                      File(page.imagePath),
-                      height: 200,
-                      width: double.infinity,
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-
-                // Layout Blocks Section
-                const Text('版面分析區塊：', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                const SizedBox(height: 6),
-                if (page.layoutBlocks.isEmpty)
-                  Text(page.ocrText, style: const TextStyle(fontSize: 12, color: Colors.grey))
-                else
-                  ...page.layoutBlocks.map((block) {
-                    Color typeColor = Colors.grey;
-                    if (block.type == 'title') typeColor = Colors.blue;
-                    if (block.type == 'table') typeColor = Colors.green;
-                    if (block.type == 'footer') typeColor = Colors.orange;
-
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 6),
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: typeColor.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: typeColor.withValues(alpha: 0.2)),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                            decoration: BoxDecoration(color: typeColor, borderRadius: BorderRadius.circular(4)),
-                            child: Text(
-                              block.type.toUpperCase(),
-                              style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              block.text,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
-              ],
-            ),
-          ),
-        );
-      },
     );
   }
 }

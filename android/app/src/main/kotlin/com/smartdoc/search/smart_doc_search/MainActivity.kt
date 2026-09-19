@@ -158,6 +158,42 @@ class MainActivity : FlutterActivity() {
                             val blocks = PdfNativeProcessor.analyzeLayout(text)
                             runOnUiThread { result.success(blocks.toString()) }
                         }
+                        "openFile" -> {
+                            val filePath = call.argument<String>("filePath") ?: ""
+                            val file = java.io.File(filePath)
+                            if (!file.exists()) {
+                                runOnUiThread { result.error("FILE_NOT_FOUND", "檔案不存在: $filePath", null) }
+                                return@execute
+                            }
+                            try {
+                                val uri = androidx.core.content.FileProvider.getUriForFile(
+                                    applicationContext,
+                                    "${applicationContext.packageName}.fileprovider",
+                                    file
+                                )
+                                val mimeType = when {
+                                    filePath.endsWith(".pdf", ignoreCase = true) -> "application/pdf"
+                                    filePath.endsWith(".png", ignoreCase = true) -> "image/png"
+                                    filePath.endsWith(".jpg", ignoreCase = true) || filePath.endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
+                                    filePath.endsWith(".webp", ignoreCase = true) -> "image/webp"
+                                    filePath.endsWith(".txt", ignoreCase = true) -> "text/plain"
+                                    else -> "*/*"
+                                }
+                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                    setDataAndType(uri, mimeType)
+                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                val chooser = android.content.Intent.createChooser(intent, "開啟原始檔案").apply {
+                                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                applicationContext.startActivity(chooser)
+                                runOnUiThread { result.success(true) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("OPEN_ERROR", e.message, null) }
+                            }
+                        }
                         else -> {
                             runOnUiThread { result.notImplemented() }
                         }

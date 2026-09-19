@@ -76,6 +76,15 @@ class AppTheme {
 
   static Color getCategoryColor(String category) {
     switch (category) {
+      case '醫學術語':
+        return const Color(0xFF0D9488); // Teal
+      case '疾病/症狀':
+      case '疾病':
+      case '症狀':
+        return const Color(0xFFE11D48); // Rose / Crimson
+      case '疾病分類編碼':
+      case 'ICD編碼':
+        return const Color(0xFFD97706); // Amber Dark / Deep Orange
       case '主題':
         return const Color(0xFF3B82F6); // Blue
       case '領域':

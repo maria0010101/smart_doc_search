@@ -14,6 +14,30 @@ class TextNormalizer {
     'llm': '大型語言模型',
     'large language model': '大型語言模型',
     'rag': '檢索增強生成',
+
+    // Medical Terminology & Disease abbreviations
+    'dm': '糖尿病',
+    'diabetes': '糖尿病',
+    'htn': '高血壓',
+    'hypertension': '高血壓',
+    'cad': '冠狀動脈心臟病',
+    'copd': '慢性阻塞性肺病',
+    'ckd': '慢性腎臟病',
+    'esrd': '末期腎臟病',
+    'ami': '急性心肌梗塞',
+    'cva': '腦中風',
+    'stroke': '腦中風',
+    'covid': '新冠肺炎',
+    'covid-19': '新冠肺炎',
+    'hf': '心力衰竭',
+    'heart failure': '心力衰竭',
+    'ad': '阿茲海默症',
+    'alzheimer': '阿茲海默症',
+    'pd': '巴金森氏症',
+    'parkinson': '巴金森氏症',
+    'icd-10': 'ICD-10疾病編碼',
+    'icd-11': 'ICD-11疾病編碼',
+    'icd': '疾病分類編碼',
   };
 
   /// Normalizes tag strings:

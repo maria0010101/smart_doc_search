@@ -211,16 +211,23 @@ class ImportService {
       aggregatedOcrText = pageText;
     }
 
-    // 3. Ollama Tag Generation
-    _emitProgress(fileName, ImportStage.ollamaTagging, 0.6, '呼叫 Ollama 生成多維標籤...');
+    // 3. AI Analysis & Medical Tag Generation
+    _emitProgress(fileName, ImportStage.ollamaTagging, 0.6, '呼叫 ${ollamaClient.providerDisplayName} 分析醫學標籤與摘要...');
     List<TagItem> generatedTags = [];
+    String aiSummary = '';
+    String aiChineseSummary = '';
+    String detectedLang = 'zh-TW';
+
     try {
-      final tags = await ollamaClient.generateTags(
+      final analysis = await ollamaClient.generateAnalysis(
         text: '$title\n$aggregatedOcrText',
       );
-      generatedTags = tags;
+      generatedTags = analysis.tags;
+      aiSummary = analysis.summary;
+      aiChineseSummary = analysis.chineseSummary;
+      detectedLang = analysis.detectedLanguage;
     } catch (e) {
-      debugPrint('Ollama tagging skipped or failed (offline mode active): $e');
+      debugPrint('AI analysis skipped or failed (offline mode active): $e');
       // Rule-based fallback tags
       generatedTags = [
         TagItem(
@@ -242,7 +249,11 @@ class ImportService {
       ];
     }
 
-    // 4. Ollama Vector Embedding
+    if (aiSummary.isEmpty) {
+      aiSummary = aggregatedOcrText.length > 200 ? '${aggregatedOcrText.substring(0, 200)}...' : aggregatedOcrText;
+    }
+
+    // 4. AI Vector Embedding
     _emitProgress(fileName, ImportStage.generatingEmbedding, 0.8, '生成文獻向量嵌入...');
     List<double>? embedding;
     try {
@@ -264,14 +275,15 @@ class ImportService {
       createdAt: now,
       updatedAt: now,
       pageCount: pageItems.length,
-      language: 'zh-TW',
+      language: detectedLang,
       tags: generatedTags,
-      summary: aggregatedOcrText.length > 200 ? '${aggregatedOcrText.substring(0, 200)}...' : aggregatedOcrText,
+      summary: aiSummary,
       embedding: embedding,
       metadata: {
         'originalPath': filePath,
         'extension': ext,
         'fileSize': await file.length(),
+        'chineseSummary': aiChineseSummary,
       },
     );
 

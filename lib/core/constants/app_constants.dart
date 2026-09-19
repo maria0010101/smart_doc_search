@@ -97,6 +97,9 @@ class AppConstants {
 
   // Document Tag Dimensions
   static const List<String> defaultTagDimensions = [
+    '醫學術語',
+    '疾病/症狀',
+    '疾病分類編碼',
     '主題',
     '領域',
     '方法',

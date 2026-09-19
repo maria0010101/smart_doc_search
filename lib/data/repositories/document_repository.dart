@@ -103,4 +103,8 @@ class DocumentRepository {
   Future<bool> clearAll() async {
     return dataSource.clearAll();
   }
+
+  Future<bool> openFile(String filePath) async {
+    return dataSource.openFile(filePath);
+  }
 }

@@ -1,9 +1,12 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
+import 'package:smart_doc_search/data/models/document_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
 import 'package:smart_doc_search/features/home/home_screen.dart';
 import 'package:smart_doc_search/features/import/import_screen.dart';
@@ -82,6 +85,79 @@ void main() async {
     dataSource: dataSource,
     ollamaClient: ollamaClient,
   );
+
+  // Seed sample demonstration medical document if database is empty
+  final allDocs = await repository.getAllDocuments();
+  if (allDocs.isEmpty) {
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final sampleFile = File('${appDir.path}/clinical_guidelines_diabetes_cardio.txt');
+      if (!sampleFile.existsSync()) {
+        await sampleFile.writeAsString('''Clinical Guidelines for Type 2 Diabetes Mellitus & Cardiovascular Risk Management
+Chapter 1: Diagnostic Criteria and Pathophysiology
+Type 2 Diabetes Mellitus (ICD-10: E11) is characterized by progressive beta-cell dysfunction and insulin resistance.
+Patients presenting with chronic hyperglycemia and hypertension are at heightened risk of atherosclerotic cardiovascular disease (ICD-10: I25).
+
+Chapter 2: Pharmacotherapy and Clinical Targets
+1. Glycemic Target: HbA1c < 7.0% for most non-pregnant adults.
+2. First-line agents: Metformin combined with SGLT2 inhibitors or GLP-1 receptor agonists.
+3. Blood pressure threshold: < 130/80 mmHg.
+
+Table 1: Recommended Disease Classification and ICD Mapping
+- Type 2 Diabetes Mellitus: E11.9
+- Atherosclerotic Heart Disease: I25.1
+- Essential Primary Hypertension: I10
+''');
+      }
+
+      final docId = 'sample-medical-doc-1';
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final sampleDoc = Document(
+        id: docId,
+        title: 'Clinical Guidelines for Type 2 Diabetes Mellitus & Cardiovascular Risk Management',
+        sourceType: 'pdf',
+        filePath: sampleFile.path,
+        fileHash: 'sample_medical_guidelines_hash',
+        createdAt: now,
+        updatedAt: now,
+        pageCount: 1,
+        language: 'en',
+        tags: [
+          TagItem(id: 'tag_med_1', name: '第2型糖尿病', category: '疾病/症狀', confidence: 0.98, source: 'ai_analysis', verified: true),
+          TagItem(id: 'tag_med_2', name: '冠狀動脈心臟病', category: '疾病/症狀', confidence: 0.96, source: 'ai_analysis', verified: true),
+          TagItem(id: 'tag_med_3', name: 'E11', category: '疾病分類編碼', confidence: 0.99, source: 'ai_analysis', verified: true),
+          TagItem(id: 'tag_med_4', name: 'I25', category: '疾病分類編碼', confidence: 0.95, source: 'ai_analysis', verified: true),
+          TagItem(id: 'tag_med_5', name: '胰島素阻抗', category: '醫學術語', confidence: 0.95, source: 'ai_analysis', verified: true),
+          TagItem(id: 'tag_med_6', name: '糖化血色素(HbA1c)', category: '醫學術語', confidence: 0.94, source: 'ai_analysis', verified: true),
+          TagItem(id: 'tag_med_7', name: 'SGLT2抑制劑', category: '醫學術語', confidence: 0.92, source: 'ai_analysis', verified: true),
+          TagItem(id: 'tag_med_8', name: '臨床實證指引', category: '文檔類型', confidence: 1.0, source: 'ai_analysis', verified: true),
+        ],
+        summary: 'This clinical guidelines document outlines evidence-based recommendations for adult Type 2 Diabetes Mellitus patients with comorbid cardiovascular diseases. Highlights target HbA1c < 7.0%, blood pressure stabilization, and organ-protective pharmacotherapy using SGLT2 inhibitors.',
+        metadata: {
+          'chineseSummary': '【中文摘要說明】\n本篇英文臨床指引針對「第2型糖尿病 (ICD-10: E11)」合併「心血管動脈硬化疾病 (ICD-10: I25)」之成年患者提供實證處置建議。核心內容包括積極控制糖化血色素 (HbA1c < 7.0%)、優先選用具備心腎保護效益之 SGLT2 抑制劑，並調控血壓與胰島素阻抗。可作為內分泌代謝科、心臟科及疾病編碼對應之核心參考文獻。',
+          'language': 'en',
+        },
+      );
+
+      final page1 = PageItem(
+        id: 'sample-med-page-1',
+        documentId: docId,
+        pageNumber: 1,
+        imagePath: '',
+        ocrText: await sampleFile.readAsString(),
+        layoutBlocks: [
+          LayoutBlock(type: 'title', bbox: [10, 10, 400, 40], text: 'Clinical Guidelines for Type 2 Diabetes Mellitus & Cardiovascular Risk Management'),
+          LayoutBlock(type: 'paragraph', bbox: [10, 50, 400, 100], text: 'Chapter 1: Diagnostic Criteria and Pathophysiology\nType 2 Diabetes Mellitus (ICD-10: E11) is characterized by progressive beta-cell dysfunction and insulin resistance.'),
+          LayoutBlock(type: 'table', bbox: [10, 160, 400, 260], text: 'Table 1: Recommended Disease Classification and ICD Mapping (E11.9, I25.1, I10)'),
+        ],
+      );
+
+      await repository.saveDocument(sampleDoc);
+      await repository.savePage(page1);
+    } catch (e) {
+      debugPrint('Error seeding sample document: $e');
+    }
+  }
 
   runApp(SmartDocSearchApp(
     repository: repository,

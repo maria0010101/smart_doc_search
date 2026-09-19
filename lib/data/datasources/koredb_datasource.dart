@@ -35,6 +35,7 @@ abstract class KoreDbDataSource {
   // Tools
   Future<List<Map<String, dynamic>>> renderPdfPages(String pdfPath, String outputDir, {int maxPages = 50});
   Future<List<LayoutBlock>> analyzeLayout(String text);
+  Future<bool> openFile(String filePath);
 }
 
 class KoreDbNativeDataSource implements KoreDbDataSource {
@@ -541,5 +542,19 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
         bbox: [10, 10, 400, 50],
       );
     }).toList();
+  }
+
+  @override
+  Future<bool> openFile(String filePath) async {
+    if (_isAndroidPlatform()) {
+      try {
+        final res = await _toolsChannel.invokeMethod<bool>('openFile', {'filePath': filePath});
+        return res ?? false;
+      } catch (e) {
+        debugPrint('openFile error: $e');
+        return false;
+      }
+    }
+    return false;
   }
 }

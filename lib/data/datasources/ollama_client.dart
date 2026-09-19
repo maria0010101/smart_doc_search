@@ -5,6 +5,38 @@ import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/utils/text_normalizer.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 
+/// Structured result of AI document analysis containing:
+/// - Categorized tags (medical terms, diseases/symptoms, ICD classification codes, etc.)
+/// - Full executive summary
+/// - Dedicated Chinese summary (for English / foreign literature to confirm target at a glance)
+/// - Detected language
+class AiAnalysisResult {
+  final List<TagItem> tags;
+  final String summary;
+  final String chineseSummary;
+  final String detectedLanguage;
+  final List<String> medicalTerms;
+  final List<String> diseasesAndSymptoms;
+  final List<String> classificationCodes;
+
+  AiAnalysisResult({
+    required this.tags,
+    this.summary = '',
+    this.chineseSummary = '',
+    this.detectedLanguage = 'zh-TW',
+    this.medicalTerms = const [],
+    this.diseasesAndSymptoms = const [],
+    this.classificationCodes = const [],
+  });
+
+  /// Best summary to display at top of detail view (prefer Chinese summary for Chinese readers)
+  String get displaySummary {
+    if (chineseSummary.isNotEmpty) return chineseSummary;
+    if (summary.isNotEmpty) return summary;
+    return '無摘要內容';
+  }
+}
+
 /// Unified AI service client supporting:
 /// - Ollama (Local/LAN)
 /// - FastAPI (Custom intermediate proxy)
@@ -238,8 +270,11 @@ class OllamaClient {
     }
   }
 
-  /// Generates tags for document content using the configured AI provider
-  Future<List<TagItem>> generateTags({
+  /// Full AI Document Analysis:
+  /// 1. Extracts structured tags: 醫學術語, 疾病/症狀, 疾病分類編碼 (ICD), 主題, 領域, 方法, 對象, 結論
+  /// 2. Produces executive summary for quick verification of query target
+  /// 3. If English / foreign text, produces Chinese summary explanation
+  Future<AiAnalysisResult> generateAnalysis({
     required String text,
     String? imageBase64,
     List<String>? dimensions,
@@ -251,26 +286,44 @@ class OllamaClient {
     final cleanHost = host.replaceAll(RegExp(r'/+$'), '');
 
     if (isFastApi || provider == AiProvider.fastapi) {
-      return _generateTagsViaFastApi(cleanHost, targetModel, text, imageBase64, dims);
+      return _generateAnalysisViaFastApi(cleanHost, targetModel, text, imageBase64, dims);
     }
 
     switch (provider) {
       case AiProvider.ollama:
-        return _generateTagsViaOllamaWithRetry(cleanHost, targetModel, text, dims, maxRetries);
+        return _generateAnalysisViaOllamaWithRetry(cleanHost, targetModel, text, dims, maxRetries);
       case AiProvider.deepseek:
-        return _generateTagsViaOpenAiCompatible(cleanHost, targetModel, text, dims, maxRetries, isDeepSeek: true);
+        return _generateAnalysisViaOpenAiCompatible(cleanHost, targetModel, text, dims, maxRetries, isDeepSeek: true);
       case AiProvider.openai:
-        return _generateTagsViaOpenAiCompatible(cleanHost, targetModel, text, dims, maxRetries, isDeepSeek: false);
+        return _generateAnalysisViaOpenAiCompatible(cleanHost, targetModel, text, dims, maxRetries, isDeepSeek: false);
       case AiProvider.claude:
-        return _generateTagsViaClaude(cleanHost, targetModel, text, dims, maxRetries);
+        return _generateAnalysisViaClaude(cleanHost, targetModel, text, dims, maxRetries);
       case AiProvider.google:
-        return _generateTagsViaGoogle(cleanHost, targetModel, text, dims, maxRetries);
+        return _generateAnalysisViaGoogle(cleanHost, targetModel, text, dims, maxRetries);
       case AiProvider.fastapi:
-        return _generateTagsViaFastApi(cleanHost, targetModel, text, imageBase64, dims);
+        return _generateAnalysisViaFastApi(cleanHost, targetModel, text, imageBase64, dims);
     }
   }
 
-  Future<List<TagItem>> _generateTagsViaFastApi(
+  /// Backward-compatible tag generator
+  Future<List<TagItem>> generateTags({
+    required String text,
+    String? imageBase64,
+    List<String>? dimensions,
+    String? model,
+    int maxRetries = 3,
+  }) async {
+    final result = await generateAnalysis(
+      text: text,
+      imageBase64: imageBase64,
+      dimensions: dimensions,
+      model: model,
+      maxRetries: maxRetries,
+    );
+    return result.tags;
+  }
+
+  Future<AiAnalysisResult> _generateAnalysisViaFastApi(
     String targetHost,
     String model,
     String text,
@@ -289,16 +342,22 @@ class OllamaClient {
       );
       if (res.statusCode == 200 && res.data is Map) {
         final List rawTags = res.data['tags'] ?? [];
-        return _parseTagItems(rawTags, source: imageBase64 != null ? 'ai_image' : 'ai_text');
+        final summary = (res.data['summary'] ?? '').toString();
+        final chSummary = (res.data['chinese_summary'] ?? '').toString();
+        return AiAnalysisResult(
+          tags: _parseTagItems(rawTags, source: imageBase64 != null ? 'ai_image' : 'ai_text'),
+          summary: summary,
+          chineseSummary: chSummary,
+        );
       }
     } catch (e) {
       debugPrint('FastAPI generate-tags error: $e');
       rethrow;
     }
-    return [];
+    return AiAnalysisResult(tags: []);
   }
 
-  Future<List<TagItem>> _generateTagsViaOllamaWithRetry(
+  Future<AiAnalysisResult> _generateAnalysisViaOllamaWithRetry(
     String targetHost,
     String model,
     String text,
@@ -306,7 +365,7 @@ class OllamaClient {
     int maxRetries,
   ) async {
     int attempts = 0;
-    String promptText = _buildPrompt(text, dims, attempt: attempts);
+    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
 
     while (attempts < maxRetries) {
       attempts++;
@@ -331,24 +390,24 @@ class OllamaClient {
 
         if (response.statusCode == 200 && response.data != null) {
           final content = response.data['message']?['content'] ?? '';
-          final tags = _parseJsonContent(content);
-          if (tags.isNotEmpty) {
-            return tags;
+          final result = _parseJsonAnalysis(content);
+          if (result.tags.isNotEmpty || result.summary.isNotEmpty) {
+            return result;
           }
         }
       } catch (e) {
-        debugPrint('Ollama tag generation attempt $attempts failed: $e');
+        debugPrint('Ollama analysis attempt $attempts failed: $e');
         if (attempts >= maxRetries) rethrow;
       }
 
-      promptText = _buildPrompt(text, dims, attempt: attempts);
+      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
       await Future.delayed(Duration(milliseconds: 500 * attempts));
     }
 
-    return [];
+    return AiAnalysisResult(tags: []);
   }
 
-  Future<List<TagItem>> _generateTagsViaOpenAiCompatible(
+  Future<AiAnalysisResult> _generateAnalysisViaOpenAiCompatible(
     String targetHost,
     String model,
     String text,
@@ -357,7 +416,7 @@ class OllamaClient {
     required bool isDeepSeek,
   }) async {
     int attempts = 0;
-    String promptText = _buildPrompt(text, dims, attempt: attempts);
+    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
 
     final url = targetHost.endsWith('/chat/completions')
         ? targetHost
@@ -373,7 +432,8 @@ class OllamaClient {
           'messages': [
             {
               'role': 'system',
-              'content': '你是一個精準的文獻分析助手。請嚴格以 JSON 格式回應結構化標籤，勿包含額外文字。'
+              'content':
+                  '你是一個精準的專業文獻與醫學分析助手。請嚴格以 JSON 格式回應，包含醫學術語、疾病症狀標籤、疾病分類編碼（如 ICD）、核心摘要與英文文獻之中文說明。'
             },
             {
               'role': 'user',
@@ -395,24 +455,24 @@ class OllamaClient {
 
         if (response.statusCode == 200 && response.data != null) {
           final content = response.data['choices']?[0]?['message']?['content'] ?? '';
-          final tags = _parseJsonContent(content);
-          if (tags.isNotEmpty) {
-            return tags;
+          final result = _parseJsonAnalysis(content);
+          if (result.tags.isNotEmpty || result.summary.isNotEmpty) {
+            return result;
           }
         }
       } catch (e) {
-        debugPrint('OpenAI/DeepSeek tag generation attempt $attempts failed: $e');
+        debugPrint('OpenAI/DeepSeek analysis attempt $attempts failed: $e');
         if (attempts >= maxRetries) rethrow;
       }
 
-      promptText = _buildPrompt(text, dims, attempt: attempts);
+      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
       await Future.delayed(Duration(milliseconds: 500 * attempts));
     }
 
-    return [];
+    return AiAnalysisResult(tags: []);
   }
 
-  Future<List<TagItem>> _generateTagsViaClaude(
+  Future<AiAnalysisResult> _generateAnalysisViaClaude(
     String targetHost,
     String model,
     String text,
@@ -420,7 +480,7 @@ class OllamaClient {
     int maxRetries,
   ) async {
     int attempts = 0;
-    String promptText = _buildPrompt(text, dims, attempt: attempts);
+    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
     final url = '$targetHost/messages';
 
     while (attempts < maxRetries) {
@@ -428,8 +488,9 @@ class OllamaClient {
       try {
         final payload = {
           'model': model,
-          'max_tokens': 1500,
-          'system': '你是一個精準的文獻分析助手。請嚴格以 JSON 格式輸出結構化標籤，勿包含 markdown 標籤以外的任何文字。',
+          'max_tokens': 2048,
+          'system':
+              '你是一個精準的專業文獻與醫學分析助手。請嚴格以 JSON 格式輸出結構化分析，包含醫學術語、疾病症狀、ICD分類碼、核心摘要及英文文獻中文對照說明。勿輸出任何 markdown 區塊外的文字說明。',
           'messages': [
             {
               'role': 'user',
@@ -452,25 +513,25 @@ class OllamaClient {
           final contentList = response.data['content'] as List?;
           if (contentList != null && contentList.isNotEmpty) {
             final content = contentList[0]['text'] ?? '';
-            final tags = _parseJsonContent(content);
-            if (tags.isNotEmpty) {
-              return tags;
+            final result = _parseJsonAnalysis(content);
+            if (result.tags.isNotEmpty || result.summary.isNotEmpty) {
+              return result;
             }
           }
         }
       } catch (e) {
-        debugPrint('Claude tag generation attempt $attempts failed: $e');
+        debugPrint('Claude analysis attempt $attempts failed: $e');
         if (attempts >= maxRetries) rethrow;
       }
 
-      promptText = _buildPrompt(text, dims, attempt: attempts);
+      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
       await Future.delayed(Duration(milliseconds: 500 * attempts));
     }
 
-    return [];
+    return AiAnalysisResult(tags: []);
   }
 
-  Future<List<TagItem>> _generateTagsViaGoogle(
+  Future<AiAnalysisResult> _generateAnalysisViaGoogle(
     String targetHost,
     String model,
     String text,
@@ -478,7 +539,7 @@ class OllamaClient {
     int maxRetries,
   ) async {
     int attempts = 0;
-    String promptText = _buildPrompt(text, dims, attempt: attempts);
+    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
     final url = '$targetHost/models/$model:generateContent';
 
     while (attempts < maxRetries) {
@@ -511,35 +572,52 @@ class OllamaClient {
             final parts = candidates[0]?['content']?['parts'] as List?;
             if (parts != null && parts.isNotEmpty) {
               final content = parts[0]['text'] ?? '';
-              final tags = _parseJsonContent(content);
-              if (tags.isNotEmpty) {
-                return tags;
+              final result = _parseJsonAnalysis(content);
+              if (result.tags.isNotEmpty || result.summary.isNotEmpty) {
+                return result;
               }
             }
           }
         }
       } catch (e) {
-        debugPrint('Google Gemini tag generation attempt $attempts failed: $e');
+        debugPrint('Google Gemini analysis attempt $attempts failed: $e');
         if (attempts >= maxRetries) rethrow;
       }
 
-      promptText = _buildPrompt(text, dims, attempt: attempts);
+      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
       await Future.delayed(Duration(milliseconds: 500 * attempts));
     }
 
-    return [];
+    return AiAnalysisResult(tags: []);
   }
 
-  String _buildPrompt(String text, List<String> dims, {int attempt = 0}) {
-    final truncatedText = text.length > 3000 ? text.substring(0, 3000) : text;
+  String _buildAnalysisPrompt(String text, List<String> dims, {int attempt = 0}) {
+    final truncatedText = text.length > 3500 ? text.substring(0, 3500) : text;
     final dimListStr = dims.join('、');
 
-    return '''你是一個精準的文獻分析助手。請閱讀下方文獻內容，擷取結構化多維標籤。
-標籤維度包含：$dimListStr。
-請嚴格以 JSON 格式回應，不輸出多餘文字：
+    return '''你是一個專業的醫學文獻與學術文獻深度分析助手。請閱讀下方文獻內容，進行多維特徵辨識、醫學術語抽取、疾病與症狀分類編碼，並撰寫精準摘要。
+若原文為英文文獻，必須同時撰寫完整的繁體中文摘要說明，以供讀者在第一時間確認該文獻是否為其檢索查詢目標。
+
+分析任務說明：
+1. 標籤抽取維度包含：$dimListStr。特別著重以下三類醫學維度：
+   - 醫學術語：提取文獻中的核心醫學專有名詞、解剖學、病理生理學術語。
+   - 疾病/症狀：提取文獻探討的具體疾病名稱、臨床綜合徵、主要症狀與徵候。
+   - 疾病分類編碼：標註對應的國際標準編碼（例如 ICD-10、ICD-11 編碼或醫學標準分類代碼）。
+2. 文獻核心摘要（summary）：客觀總結研究目的、涉及疾病/對象、診斷方法與核心結論（約 150-300 字）。
+3. 英文文獻中文摘要說明（chinese_summary）：
+   - 若原文為英文或外文，請務必提供繁體中文摘要說明，以便在文獻詳情最上方呈現供確認目標！
+   - 若原文已為中文，此欄位填寫中文摘要即可。
+
+請嚴格輸出合法的 JSON 格式，不要輸出任何額外文字：
 {
+  "detected_language": "en 或 zh",
+  "summary": "文獻完整核心摘要...",
+  "chinese_summary": "針對英文文獻之中文摘要說明（英文文獻必填）...",
+  "medical_terms": ["醫學專有名詞1", "醫學專有名詞2"],
+  "diseases_and_symptoms": ["疾病或症狀名稱1", "疾病或症狀名稱2"],
+  "classification_codes": ["ICD-10/11編碼", "相關分類代碼"],
   "tags": [
-    {"name": "標籤名稱", "category": "維度", "confidence": 0.95}
+    {"name": "標籤名稱", "category": "疾病/症狀 或 醫學術語 或 疾病分類編碼 或 主題", "confidence": 0.95}
   ]
 }
 文獻內容：
@@ -549,10 +627,9 @@ $truncatedText
 ''';
   }
 
-  List<TagItem> _parseJsonContent(String content) {
+  AiAnalysisResult _parseJsonAnalysis(String content) {
     try {
       var cleaned = content.trim();
-      // Remove markdown ```json ``` wraps if any
       if (cleaned.startsWith('```')) {
         cleaned = cleaned.replaceAll(RegExp(r'^```(json)?|```$', multiLine: true), '').trim();
       }
@@ -561,7 +638,6 @@ $truncatedText
       try {
         parsed = json.decode(cleaned);
       } catch (_) {
-        // Fallback: extract the outermost JSON object or array via regex
         final match = RegExp(r'(\{[\s\S]*\}|\[[\s\S]*\])').firstMatch(cleaned);
         if (match != null) {
           parsed = json.decode(match.group(0)!);
@@ -570,15 +646,80 @@ $truncatedText
         }
       }
 
-      if (parsed is Map && parsed['tags'] is List) {
-        return _parseTagItems(parsed['tags'] as List, source: 'ai_text');
+      if (parsed is Map) {
+        final summary = (parsed['summary'] ?? '').toString();
+        final chineseSummary = (parsed['chinese_summary'] ?? parsed['chineseSummary'] ?? '').toString();
+        final lang = (parsed['detected_language'] ?? parsed['language'] ?? 'zh-TW').toString();
+
+        final medTerms = (parsed['medical_terms'] as List?)?.map((e) => e.toString()).toList() ?? [];
+        final diseases = (parsed['diseases_and_symptoms'] as List?)?.map((e) => e.toString()).toList() ?? [];
+        final codes = (parsed['classification_codes'] as List?)?.map((e) => e.toString()).toList() ?? [];
+
+        final rawTags = (parsed['tags'] as List?) ?? [];
+        final parsedTags = _parseTagItems(rawTags, source: 'ai_analysis');
+
+        // Automatically ensure items from medical arrays exist as tags
+        final existingNames = parsedTags.map((t) => t.name.toLowerCase()).toSet();
+
+        for (final d in diseases) {
+          final norm = TextNormalizer.normalizeTag(d);
+          if (norm.isNotEmpty && !existingNames.contains(norm.toLowerCase())) {
+            existingNames.add(norm.toLowerCase());
+            parsedTags.add(TagItem(
+              id: 'med_d_${DateTime.now().microsecondsSinceEpoch}_${parsedTags.length}',
+              name: norm,
+              category: '疾病/症狀',
+              confidence: 0.95,
+              source: 'ai_analysis',
+            ));
+          }
+        }
+
+        for (final c in codes) {
+          final norm = TextNormalizer.normalizeTag(c);
+          if (norm.isNotEmpty && !existingNames.contains(norm.toLowerCase())) {
+            existingNames.add(norm.toLowerCase());
+            parsedTags.add(TagItem(
+              id: 'med_c_${DateTime.now().microsecondsSinceEpoch}_${parsedTags.length}',
+              name: norm,
+              category: '疾病分類編碼',
+              confidence: 0.92,
+              source: 'ai_analysis',
+            ));
+          }
+        }
+
+        for (final m in medTerms) {
+          final norm = TextNormalizer.normalizeTag(m);
+          if (norm.isNotEmpty && !existingNames.contains(norm.toLowerCase())) {
+            existingNames.add(norm.toLowerCase());
+            parsedTags.add(TagItem(
+              id: 'med_t_${DateTime.now().microsecondsSinceEpoch}_${parsedTags.length}',
+              name: norm,
+              category: '醫學術語',
+              confidence: 0.90,
+              source: 'ai_analysis',
+            ));
+          }
+        }
+
+        return AiAnalysisResult(
+          tags: parsedTags,
+          summary: summary,
+          chineseSummary: chineseSummary,
+          detectedLanguage: lang,
+          medicalTerms: medTerms,
+          diseasesAndSymptoms: diseases,
+          classificationCodes: codes,
+        );
       } else if (parsed is List) {
-        return _parseTagItems(parsed, source: 'ai_text');
+        final tags = _parseTagItems(parsed, source: 'ai_analysis');
+        return AiAnalysisResult(tags: tags);
       }
     } catch (e) {
-      debugPrint('Error parsing JSON from AI response: $e, content: $content');
+      debugPrint('Error parsing analysis JSON: $e, content: $content');
     }
-    return [];
+    return AiAnalysisResult(tags: []);
   }
 
   List<TagItem> _parseTagItems(List rawList, {String source = 'ai_text'}) {
@@ -703,8 +844,8 @@ $truncatedText
       case AiProvider.deepseek:
       case AiProvider.claude:
       case AiProvider.fastapi:
-        // DeepSeek and Claude do not provide standard embedding endpoints.
-        // Fallback to empty vector gracefully (search will use BM25 + tags).
+        // DeepSeek and Claude do not provide standard public vector embedding endpoints.
+        // Handled via local BM25 + inverted index seamlessly.
         break;
     }
     return [];

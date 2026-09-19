@@ -248,5 +248,66 @@ void main() {
       expect(ok, isFalse);
     });
   });
+
+  group('6. Medical Terminology, Disease Classification & AI Summary Tests', () {
+    test('TextNormalizer normalizes medical terms and disease abbreviations', () {
+      expect(TextNormalizer.normalizeTag('DM'), equals('糖尿病'));
+      expect(TextNormalizer.normalizeTag('diabetes'), equals('糖尿病'));
+      expect(TextNormalizer.normalizeTag('HTN'), equals('高血壓'));
+      expect(TextNormalizer.normalizeTag('CAD'), equals('冠狀動脈心臟病'));
+      expect(TextNormalizer.normalizeTag('COPD'), equals('慢性阻塞性肺病'));
+      expect(TextNormalizer.normalizeTag('AMI'), equals('急性心肌梗塞'));
+      expect(TextNormalizer.normalizeTag('CVA'), equals('腦中風'));
+      expect(TextNormalizer.normalizeTag('ICD-10'), equals('ICD-10疾病編碼'));
+    });
+
+    test('AiAnalysisResult correctly stores medical categories and summaries', () {
+      final result = AiAnalysisResult(
+        tags: [
+          TagItem(id: '1', name: '第2型糖尿病', category: '疾病/症狀'),
+          TagItem(id: '2', name: 'E11', category: '疾病分類編碼'),
+          TagItem(id: '3', name: '胰島素阻抗', category: '醫學術語'),
+        ],
+        summary: 'A clinical research study investigating Type 2 Diabetes Mellitus interventions.',
+        chineseSummary: '本臨床研究探討第2型糖尿病之介入療法與血糖調控成果。',
+        detectedLanguage: 'en',
+        medicalTerms: ['胰島素阻抗'],
+        diseasesAndSymptoms: ['第2型糖尿病'],
+        classificationCodes: ['E11'],
+      );
+
+      expect(result.tags.length, 3);
+      expect(result.tags.any((t) => t.category == '疾病/症狀'), isTrue);
+      expect(result.tags.any((t) => t.category == '疾病分類編碼'), isTrue);
+      expect(result.tags.any((t) => t.category == '醫學術語'), isTrue);
+      expect(result.displaySummary, contains('本臨床研究探討第2型糖尿病'));
+      expect(result.detectedLanguage, 'en');
+    });
+
+    test('Document model stores Chinese summary and medical tags in metadata', () {
+      final doc = Document(
+        id: 'med-doc-1',
+        title: 'Management of Hypertension and Cardiovascular Risk',
+        sourceType: 'pdf',
+        filePath: '/storage/medical/doc1.pdf',
+        fileHash: 'hash-med-1',
+        createdAt: 1700000000000,
+        updatedAt: 1700000000000,
+        language: 'en',
+        tags: [
+          TagItem(id: 't-1', name: '高血壓', category: '疾病/症狀'),
+          TagItem(id: 't-2', name: 'I10', category: '疾病分類編碼'),
+          TagItem(id: 't-3', name: '動脈粥狀硬化', category: '醫學術語'),
+        ],
+        summary: 'Clinical trial evaluating blood pressure targets.',
+        metadata: {
+          'chineseSummary': '評估降血壓目標值與心血管風險之大型臨床試驗。',
+        },
+      );
+
+      expect(doc.metadata['chineseSummary'], contains('評估降血壓目標值'));
+      expect(doc.tags.length, 3);
+    });
+  });
 }
 
