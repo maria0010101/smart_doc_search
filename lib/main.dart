@@ -17,17 +17,60 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = await SharedPreferences.getInstance();
   final isDarkMode = prefs.getBool(AppConstants.prefDarkMode) ?? false;
-  final ollamaHost = prefs.getString(AppConstants.prefOllamaHost) ?? AppConstants.defaultOllamaHost;
-  final textModel = prefs.getString(AppConstants.prefTextModel) ?? AppConstants.defaultTextTagModel;
-  final embedModel = prefs.getString(AppConstants.prefEmbeddingModel) ?? AppConstants.defaultEmbeddingModel;
-  final isFastApi = prefs.getBool(AppConstants.prefFastApiEnabled) ?? false;
+
+  final savedProvId = prefs.getString(AppConstants.prefAiProvider);
+  final provider = AiProvider.fromId(savedProvId);
+
+  String host = AppConstants.defaultOllamaHost;
+  String textModel = AppConstants.defaultTextTagModel;
+  String embedModel = AppConstants.defaultEmbeddingModel;
+  String apiKey = '';
+  bool isFastApi = (provider == AiProvider.fastapi);
+
+  switch (provider) {
+    case AiProvider.ollama:
+      host = prefs.getString(AppConstants.prefOllamaHost) ?? AppConstants.defaultOllamaHost;
+      textModel = prefs.getString(AppConstants.prefTextModel) ?? AppConstants.defaultTextTagModel;
+      embedModel = prefs.getString(AppConstants.prefEmbeddingModel) ?? AppConstants.defaultEmbeddingModel;
+      break;
+    case AiProvider.fastapi:
+      host = prefs.getString(AppConstants.prefFastApiHost) ?? AppConstants.defaultFastApiHost;
+      textModel = prefs.getString(AppConstants.prefTextModel) ?? AppConstants.defaultTextTagModel;
+      embedModel = prefs.getString(AppConstants.prefEmbeddingModel) ?? AppConstants.defaultEmbeddingModel;
+      isFastApi = true;
+      break;
+    case AiProvider.deepseek:
+      host = prefs.getString(AppConstants.prefDeepSeekHost) ?? AppConstants.defaultDeepSeekHost;
+      textModel = prefs.getString(AppConstants.prefDeepSeekModel) ?? AppConstants.defaultDeepSeekModel;
+      apiKey = prefs.getString(AppConstants.prefDeepSeekApiKey) ?? '';
+      break;
+    case AiProvider.openai:
+      host = prefs.getString(AppConstants.prefOpenAiHost) ?? AppConstants.defaultOpenAiHost;
+      textModel = prefs.getString(AppConstants.prefOpenAiModel) ?? AppConstants.defaultOpenAiModel;
+      embedModel = prefs.getString(AppConstants.prefOpenAiEmbeddingModel) ?? AppConstants.defaultOpenAiEmbeddingModel;
+      apiKey = prefs.getString(AppConstants.prefOpenAiApiKey) ?? '';
+      break;
+    case AiProvider.claude:
+      host = prefs.getString(AppConstants.prefClaudeHost) ?? AppConstants.defaultClaudeHost;
+      textModel = prefs.getString(AppConstants.prefClaudeModel) ?? AppConstants.defaultClaudeModel;
+      apiKey = prefs.getString(AppConstants.prefClaudeApiKey) ?? '';
+      break;
+    case AiProvider.google:
+      host = prefs.getString(AppConstants.prefGoogleHost) ?? AppConstants.defaultGoogleHost;
+      textModel = prefs.getString(AppConstants.prefGoogleModel) ?? AppConstants.defaultGoogleModel;
+      embedModel = prefs.getString(AppConstants.prefGoogleEmbeddingModel) ?? AppConstants.defaultGoogleEmbeddingModel;
+      apiKey = prefs.getString(AppConstants.prefGoogleApiKey) ?? '';
+      break;
+  }
 
   final dataSource = KoreDbNativeDataSource();
   final repository = DocumentRepository(dataSource: dataSource);
   final ollamaClient = OllamaClient(
-    host: ollamaHost,
+    provider: provider,
+    host: host,
     textModel: textModel,
     embeddingModel: embedModel,
+    apiKey: apiKey,
     isFastApi: isFastApi,
   );
   final importService = ImportService(

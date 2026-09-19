@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/utils/hash_util.dart';
 import 'package:smart_doc_search/core/utils/text_normalizer.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
@@ -189,4 +190,63 @@ void main() {
       expect(await repository.getDocument('doc-1'), isNull);
     });
   });
+
+  group('5. Multi-Provider AI Configuration & Parsing Tests', () {
+    test('AiProvider enum and serialization works correctly', () {
+      expect(AiProvider.fromId('ollama'), equals(AiProvider.ollama));
+      expect(AiProvider.fromId('deepseek'), equals(AiProvider.deepseek));
+      expect(AiProvider.fromId('openai'), equals(AiProvider.openai));
+      expect(AiProvider.fromId('claude'), equals(AiProvider.claude));
+      expect(AiProvider.fromId('google'), equals(AiProvider.google));
+      expect(AiProvider.fromId('fastapi'), equals(AiProvider.fastapi));
+      expect(AiProvider.fromId('unknown'), equals(AiProvider.ollama)); // fallback
+    });
+
+    test('OllamaClient supports multi-provider switching and properties', () {
+      final client = OllamaClient(
+        provider: AiProvider.deepseek,
+        host: AppConstants.defaultDeepSeekHost,
+        textModel: 'deepseek-chat',
+        apiKey: 'test-sk-12345',
+      );
+
+      expect(client.isCloudProvider, isTrue);
+      expect(client.providerDisplayName, 'DeepSeek API');
+      expect(client.host, 'https://api.deepseek.com');
+      expect(client.apiKey, 'test-sk-12345');
+
+      // Switch to Claude
+      client.provider = AiProvider.claude;
+      client.host = AppConstants.defaultClaudeHost;
+      client.textModel = 'claude-3-5-haiku-20241022';
+      expect(client.providerDisplayName, 'Anthropic Claude API');
+      expect(client.isCloudProvider, isTrue);
+
+      // Switch to Google
+      client.provider = AiProvider.google;
+      client.host = AppConstants.defaultGoogleHost;
+      client.textModel = 'gemini-1.5-flash';
+      expect(client.providerDisplayName, 'Google Gemini API');
+
+      // Switch to OpenAI
+      client.provider = AiProvider.openai;
+      client.host = AppConstants.defaultOpenAiHost;
+      client.textModel = 'gpt-4o-mini';
+      expect(client.providerDisplayName, 'OpenAI GPT API');
+
+      // Switch to Ollama
+      client.provider = AiProvider.ollama;
+      expect(client.isCloudProvider, isFalse);
+    });
+
+    test('OllamaClient testConnection requires API key for cloud providers', () async {
+      final client = OllamaClient(
+        provider: AiProvider.deepseek,
+        apiKey: '', // Empty key
+      );
+      final ok = await client.testConnection();
+      expect(ok, isFalse);
+    });
+  });
 }
+

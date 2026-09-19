@@ -84,8 +84,8 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Tooltip(
               message: _ollamaOnline == true
-                  ? 'Ollama 服務在線 (${widget.ollamaClient.host})'
-                  : 'Ollama 離線（仍可離線全文檢索）',
+                  ? '${widget.ollamaClient.providerDisplayName} 在線 (${widget.ollamaClient.host})'
+                  : 'AI 服務離線（仍可離線全文檢索）',
               child: Chip(
                 avatar: Icon(
                   Icons.circle,

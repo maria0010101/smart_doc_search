@@ -38,5 +38,14 @@ void main() {
     expect(find.text('匯入'), findsNWidgets(2)); // Button on HomeScreen + Bottom NavigationDestination
     expect(find.text('標籤'), findsOneWidget);
     expect(find.text('設定'), findsOneWidget);
+
+    // Tap on Settings tab
+    await tester.tap(find.text('設定'));
+    await tester.pumpAndSettle();
+
+    // Verify AI Settings Card exists
+    expect(find.text('AI 推理服務設定'), findsOneWidget);
+    expect(find.text('選擇 AI 服務提供商 (Provider)'), findsOneWidget);
+    expect(find.text('連線測試'), findsOneWidget);
   });
 }
