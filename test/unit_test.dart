@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart' as syncfusion;
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/utils/hash_util.dart';
 import 'package:smart_doc_search/core/utils/text_normalizer.dart';
@@ -307,6 +309,21 @@ void main() {
 
       expect(doc.metadata['chineseSummary'], contains('評估降血壓目標值'));
       expect(doc.tags.length, 3);
+    });
+  });
+
+  group('7. Native Text Extraction & Document Copy Tests', () {
+    test('Extracts native text from PDF without OCR if embedded text exists', () {
+      final samplePdf = File('/home/hpd/下載/王稟合.pdf');
+      if (samplePdf.existsSync()) {
+        final bytes = samplePdf.readAsBytesSync();
+        final pdfDoc = syncfusion.PdfDocument(inputBytes: bytes);
+        final extractor = syncfusion.PdfTextExtractor(pdfDoc);
+        final text = extractor.extractText();
+        expect(text, isNotEmpty);
+        expect(text.trim().length, greaterThan(10));
+        pdfDoc.dispose();
+      }
     });
   });
 }

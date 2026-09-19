@@ -158,6 +158,21 @@ class MainActivity : FlutterActivity() {
                             val blocks = PdfNativeProcessor.analyzeLayout(text)
                             runOnUiThread { result.success(blocks.toString()) }
                         }
+                        "copyToDocuments" -> {
+                            val sourcePath = call.argument<String>("sourcePath") ?: ""
+                            val fileName = call.argument<String>("fileName") ?: ""
+                            val sourceFile = java.io.File(sourcePath)
+                            if (!sourceFile.exists()) {
+                                runOnUiThread { result.error("FILE_NOT_FOUND", "檔案不存在: $sourcePath", null) }
+                                return@execute
+                            }
+                            try {
+                                val copiedPath = copyFileToDeviceDocuments(sourceFile, fileName)
+                                runOnUiThread { result.success(copiedPath) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("COPY_ERROR", e.message, null) }
+                            }
+                        }
                         "openFile" -> {
                             val filePath = call.argument<String>("filePath") ?: ""
                             val file = java.io.File(filePath)
@@ -176,7 +191,11 @@ class MainActivity : FlutterActivity() {
                                     filePath.endsWith(".png", ignoreCase = true) -> "image/png"
                                     filePath.endsWith(".jpg", ignoreCase = true) || filePath.endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
                                     filePath.endsWith(".webp", ignoreCase = true) -> "image/webp"
-                                    filePath.endsWith(".txt", ignoreCase = true) -> "text/plain"
+                                    filePath.endsWith(".txt", ignoreCase = true) || filePath.endsWith(".log", ignoreCase = true) -> "text/plain"
+                                    filePath.endsWith(".md", ignoreCase = true) || filePath.endsWith(".markdown", ignoreCase = true) -> "text/markdown"
+                                    filePath.endsWith(".csv", ignoreCase = true) -> "text/csv"
+                                    filePath.endsWith(".json", ignoreCase = true) -> "application/json"
+                                    filePath.endsWith(".ppt", ignoreCase = true) || filePath.endsWith(".pptx", ignoreCase = true) -> "application/vnd.ms-powerpoint"
                                     else -> "*/*"
                                 }
                                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
@@ -203,5 +222,51 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Copies imported literature file to device Documents directory.
+     * Tries public /storage/emulated/0/Documents/SmartDocSearch first,
+     * then app-specific external Documents, and finally internal Documents.
+     */
+    private fun copyFileToDeviceDocuments(sourceFile: java.io.File, preferredName: String): String {
+        val name = if (preferredName.isNotEmpty()) preferredName else sourceFile.name
+
+        // Strategy 1: Public Documents Directory (/storage/emulated/0/Documents/SmartDocSearch)
+        try {
+            val publicDocs = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
+            val appFolder = java.io.File(publicDocs, "SmartDocSearch")
+            if (!appFolder.exists()) {
+                appFolder.mkdirs()
+            }
+            if (appFolder.exists()) {
+                val targetFile = java.io.File(appFolder, name)
+                sourceFile.copyTo(targetFile, overwrite = true)
+                if (targetFile.exists() && targetFile.length() > 0) {
+                    return targetFile.absolutePath
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Strategy 2: App external storage Documents directory
+        try {
+            val extDocsDir = applicationContext.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)
+            if (extDocsDir != null) {
+                val appFolder = java.io.File(extDocsDir, "SmartDocSearch")
+                if (!appFolder.exists()) appFolder.mkdirs()
+                val targetFile = java.io.File(appFolder, name)
+                sourceFile.copyTo(targetFile, overwrite = true)
+                if (targetFile.exists() && targetFile.length() > 0) {
+                    return targetFile.absolutePath
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Strategy 3: Internal app files Documents directory
+        val internalDocs = java.io.File(applicationContext.filesDir, "Documents")
+        if (!internalDocs.exists()) internalDocs.mkdirs()
+        val targetFile = java.io.File(internalDocs, name)
+        sourceFile.copyTo(targetFile, overwrite = true)
+        return targetFile.absolutePath
     }
 }

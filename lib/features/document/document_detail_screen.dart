@@ -87,7 +87,9 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
 
   Future<void> _openOriginalFile([int? pageIndex]) async {
     if (_document == null) return;
-    final ok = await widget.repository.openFile(_document!.filePath);
+    final copyPath = (_document!.metadata['documentsCopyPath'] as String?);
+    final targetPath = (copyPath != null && copyPath.isNotEmpty) ? copyPath : _document!.filePath;
+    final ok = await widget.repository.openFile(targetPath);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -337,9 +339,9 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     );
 
     try {
-      final allText = _pages.map((p) => p.ocrText).join('\n');
+      final allText = _pages.map((p) => '【第 ${p.pageNumber} 頁】\n${p.ocrText}').join('\n\n');
       final analysis = await widget.ollamaClient.generateAnalysis(
-        text: '${_document!.title}\n$allText',
+        text: '文獻標題：${_document!.title}\n\n完整全文內容：\n$allText',
       );
 
       if (mounted) {
@@ -1113,10 +1115,17 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                 _buildMetaRow('檔案格式', doc.sourceType.toUpperCase()),
                 _buildMetaRow('總頁數', '${doc.pageCount} 頁'),
                 _buildMetaRow('語言識別', doc.language),
+                if (doc.metadata['extractionMethod'] != null)
+                  _buildMetaRow(
+                    '文字解析方式',
+                    doc.metadata['extractionMethod'] == 'native_text'
+                        ? '原生文字內容直接判讀（跳過 OCR）'
+                        : '端側 OCR 文字識別',
+                  ),
                 _buildMetaRow('匯入時間', dateFormat.format(DateTime.fromMillisecondsSinceEpoch(doc.createdAt))),
                 _buildMetaRow('最後更新', dateFormat.format(DateTime.fromMillisecondsSinceEpoch(doc.updatedAt))),
                 _buildMetaRow('SHA-256 查重碼', doc.fileHash.isNotEmpty ? doc.fileHash : '無'),
-                _buildMetaRow('原始檔案路徑', doc.filePath),
+                _buildMetaRow('手機副本路徑', (doc.metadata['documentsCopyPath'] as String?) ?? doc.filePath),
                 const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,

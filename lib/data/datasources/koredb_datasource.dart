@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 
@@ -36,6 +37,7 @@ abstract class KoreDbDataSource {
   Future<List<Map<String, dynamic>>> renderPdfPages(String pdfPath, String outputDir, {int maxPages = 50});
   Future<List<LayoutBlock>> analyzeLayout(String text);
   Future<bool> openFile(String filePath);
+  Future<String?> copyToDocuments(String sourcePath, String fileName);
 }
 
 class KoreDbNativeDataSource implements KoreDbDataSource {
@@ -556,5 +558,32 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
       }
     }
     return false;
+  }
+
+  @override
+  Future<String?> copyToDocuments(String sourcePath, String fileName) async {
+    if (_isAndroidPlatform()) {
+      try {
+        final res = await _toolsChannel.invokeMethod<String>('copyToDocuments', {
+          'sourcePath': sourcePath,
+          'fileName': fileName,
+        });
+        if (res != null && res.isNotEmpty) return res;
+      } catch (e) {
+        debugPrint('copyToDocuments native error: $e');
+      }
+    }
+    // Fallback: Copy to application documents folder
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final docsDir = Directory('${appDir.path}/Documents/SmartDocSearch');
+      if (!await docsDir.exists()) await docsDir.create(recursive: true);
+      final dest = File('${docsDir.path}/$fileName');
+      await File(sourcePath).copy(dest.path);
+      return dest.path;
+    } catch (e) {
+      debugPrint('copyToDocuments fallback error: $e');
+      return null;
+    }
   }
 }

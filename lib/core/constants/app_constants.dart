@@ -118,6 +118,7 @@ class AppConstants {
 
   // File Types
   static const List<String> supportedPdfExt = ['pdf'];
+  static const List<String> supportedTextExt = ['txt', 'md', 'markdown', 'csv', 'json', 'log'];
   static const List<String> supportedImageExt = ['jpg', 'jpeg', 'png', 'webp'];
   static const List<String> supportedPptExt = ['ppt', 'pptx'];
 

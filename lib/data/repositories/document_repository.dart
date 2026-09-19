@@ -107,4 +107,8 @@ class DocumentRepository {
   Future<bool> openFile(String filePath) async {
     return dataSource.openFile(filePath);
   }
+
+  Future<String?> copyToDocuments(String sourcePath, String fileName) async {
+    return dataSource.copyToDocuments(sourcePath, fileName);
+  }
 }
