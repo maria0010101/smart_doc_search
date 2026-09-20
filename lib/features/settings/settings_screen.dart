@@ -1126,6 +1126,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: Text('本機隱私保護'),
               subtitle: Text('文獻內容與反向標籤索引均存於本地引擎 (Android KoreDB / Windows SQLite)，確保資產安全與跨端相容。'),
             ),
+            const Divider(),
+            const ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.info_outline, color: Colors.blueGrey),
+              title: Text('軟體版本'),
+              subtitle: Text('個人智能文獻檢索 v${AppConstants.appVersion}'),
+            ),
           ],
         ),
       ),
