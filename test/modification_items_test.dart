@@ -294,5 +294,114 @@ void main() {
       expect(mobileDocs.first.title, 'Windows 11 與 Linux 跨端互通文獻');
       expect(mobileDocs.first.tags.first.codeSystem, 'ICD-10-PCS');
     });
+
+    test('SqliteDesktopDataSource handles backup with duplicate tags without UNIQUE constraint failure', () async {
+      // Simulate the exact failure from Windows 11 screenshot error.jpg:
+      // Multiple tag items with the exact same name 'coccygeal joint fusion' but different IDs
+      final payloadWithDuplicateTags = json.encode({
+        'version': '2.0',
+        'timestamp': 1789840539675,
+        'documents': [
+          {
+            'id': 'doc-1',
+            'title': '關節融合文獻 1',
+            'sourceType': 'pdf',
+            'filePath': 'C:\\docs\\doc1.pdf',
+            'fileHash': 'hash1',
+            'createdAt': 1000,
+            'updatedAt': 1000,
+            'pageCount': 2,
+            'tags': [
+              {
+                'id': 'med_t_1789840539675658_181',
+                'name': 'coccygeal joint fusion',
+                'category': '醫學術語',
+                'code_system': 'ICD-10-PCS',
+              }
+            ],
+            'summary': '- 關節指引 (P.1)',
+            'metadata': {},
+          },
+          {
+            'id': 'doc-2',
+            'title': '關節融合文獻 2',
+            'sourceType': 'pdf',
+            'filePath': 'C:\\docs\\doc2.pdf',
+            'fileHash': 'hash2',
+            'createdAt': 2000,
+            'updatedAt': 2000,
+            'pageCount': 2,
+            'tags': [
+              {
+                'id': 'med_t_1789840539675659_999',
+                'name': 'coccygeal joint fusion',
+                'category': '醫學術語',
+                'code_system': 'ICD-10-PCS',
+              }
+            ],
+            'summary': '- 關節指引 2 (P.1)',
+            'metadata': {},
+          }
+        ],
+        'pages': [],
+        'tags': [
+          {
+            'id': 'med_t_1789840539675658_181',
+            'name': 'coccygeal joint fusion',
+            'category': '醫學術語',
+            'aliases': [],
+            'usage_count': 1,
+            'code_system': null,
+            'created_at': 0,
+            'updated_at': 0,
+          },
+          {
+            'id': 'med_t_1789840539675659_999',
+            'name': 'coccygeal joint fusion',
+            'category': '醫學術語',
+            'aliases': ['coccyx fusion'],
+            'usage_count': 1,
+            'code_system': 'ICD-10-PCS',
+            'created_at': 0,
+            'updated_at': 100,
+          }
+        ],
+      });
+
+      // 1. Direct restore into desktop SQLite datasource must succeed without throwing SQLite 2067 UNIQUE constraint failed
+      final ok = await desktopSource.restoreBackup(payloadWithDuplicateTags);
+      expect(ok, isTrue);
+
+      final tags = await desktopSource.getAllTags();
+      expect(tags.length, 1);
+      expect(tags.first.name, 'coccygeal joint fusion');
+      expect(tags.first.usageCount, 2);
+      expect(tags.first.codeSystem, 'ICD-10-PCS');
+      expect(tags.first.aliases.contains('coccyx fusion'), isTrue);
+
+      final docs = await desktopSource.getAllDocuments();
+      expect(docs.length, 2);
+
+      // 2. Also verify DocumentRepository.restoreBackupWithValidation succeeds
+      final repo = DocumentRepository(dataSource: desktopSource);
+      final res = await repo.restoreBackupWithValidation(payloadWithDuplicateTags);
+      expect(res.success, isTrue);
+      expect(res.message.contains('成功還原備份'), isTrue);
+    });
+
+    test('SqliteDesktopDataSource successfully imports real user backup file with 105 duplicate tags', () async {
+      final userBackupFile = File('/tmp/user_backup.json');
+      if (!await userBackupFile.exists()) return;
+
+      final content = await userBackupFile.readAsString();
+      final repo = DocumentRepository(dataSource: desktopSource);
+      final res = await repo.restoreBackupWithValidation(content);
+      expect(res.success, isTrue);
+
+      final stats = await desktopSource.getStats();
+      expect(stats['documentCount'], 5);
+      expect(stats['pageCount'], 176);
+      expect(stats['tagCount'], 982); // 982 unique tags case-insensitively deduplicated from 1159
+    });
   });
 }

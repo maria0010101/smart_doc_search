@@ -603,22 +603,26 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
           final embJson = doc.embedding != null ? json.encode(doc.embedding) : null;
           final chSummary = (doc.metadata['chineseSummary'] ?? '').toString();
 
-          await txn.insert('documents', {
-            'id': doc.id,
-            'title': doc.title,
-            'source_type': doc.sourceType,
-            'file_hash': doc.fileHash,
-            'file_path': doc.filePath,
-            'page_count': doc.pageCount,
-            'summary': doc.summary,
-            'chinese_summary': chSummary,
-            'detected_language': doc.language,
-            'tags_json': tagsJson,
-            'metadata_json': metaJson,
-            'embedding_json': embJson,
-            'created_at': doc.createdAt,
-            'updated_at': doc.updatedAt,
-          });
+          await txn.insert(
+            'documents',
+            {
+              'id': doc.id,
+              'title': doc.title,
+              'source_type': doc.sourceType,
+              'file_hash': doc.fileHash,
+              'file_path': doc.filePath,
+              'page_count': doc.pageCount,
+              'summary': doc.summary,
+              'chinese_summary': chSummary,
+              'detected_language': doc.language,
+              'tags_json': tagsJson,
+              'metadata_json': metaJson,
+              'embedding_json': embJson,
+              'created_at': doc.createdAt,
+              'updated_at': doc.updatedAt,
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
         }
       }
 
@@ -628,32 +632,101 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
           final layoutJson = json.encode(page.layoutBlocks.map((b) => b.toMap()).toList());
           final embJson = page.embedding != null ? json.encode(page.embedding) : null;
 
-          await txn.insert('pages', {
-            'id': page.id,
-            'document_id': page.documentId,
-            'page_number': page.pageNumber,
-            'image_path': page.imagePath,
-            'ocr_text': page.ocrText,
-            'layout_blocks_json': layoutJson,
-            'embedding_json': embJson,
-          });
+          await txn.insert(
+            'pages',
+            {
+              'id': page.id,
+              'document_id': page.documentId,
+              'page_number': page.pageNumber,
+              'image_path': page.imagePath,
+              'ocr_text': page.ocrText,
+              'layout_blocks_json': layoutJson,
+              'embedding_json': embJson,
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
         }
       }
 
+      // Collect and deduplicate tags by normalized name to prevent UNIQUE constraint failure
+      final Map<String, Map<String, dynamic>> uniqueTags = {};
+
       if (root['tags'] is List) {
         for (final item in root['tags']) {
+          if (item is! Map) continue;
           final tag = TagDefinition.fromMap(Map<String, dynamic>.from(item));
-          await txn.insert('tags', {
-            'id': tag.id,
-            'name': tag.name,
-            'category': tag.category,
-            'aliases_json': json.encode(tag.aliases),
-            'usage_count': tag.usageCount,
-            'code_system': tag.codeSystem,
-            'created_at': tag.createdAt,
-            'updated_at': tag.updatedAt,
-          });
+          final key = tag.name.trim().toLowerCase();
+          if (key.isEmpty) continue;
+
+          if (!uniqueTags.containsKey(key)) {
+            uniqueTags[key] = {
+              'id': tag.id,
+              'name': tag.name.trim(),
+              'category': tag.category,
+              'aliases_json': json.encode(tag.aliases),
+              'usage_count': tag.usageCount,
+              'code_system': tag.codeSystem,
+              'created_at': tag.createdAt,
+              'updated_at': tag.updatedAt,
+            };
+          } else {
+            final existing = uniqueTags[key]!;
+            final currentCount = (existing['usage_count'] as num?)?.toInt() ?? 0;
+            existing['usage_count'] = currentCount + tag.usageCount;
+            if ((existing['code_system'] == null || existing['code_system'].toString().isEmpty) &&
+                tag.codeSystem != null &&
+                tag.codeSystem!.isNotEmpty) {
+              existing['code_system'] = tag.codeSystem;
+            }
+            try {
+              final existingAliases = (json.decode(existing['aliases_json'] as String) as List).cast<String>().toSet();
+              existingAliases.addAll(tag.aliases);
+              existing['aliases_json'] = json.encode(existingAliases.toList());
+            } catch (_) {}
+            if (tag.updatedAt > (existing['updated_at'] as int? ?? 0)) {
+              existing['updated_at'] = tag.updatedAt;
+            }
+          }
         }
+      }
+
+      // Also ensure any tags attached to documents exist in uniqueTags
+      if (root['documents'] is List) {
+        for (final item in root['documents']) {
+          if (item is! Map) continue;
+          final doc = Document.fromMap(Map<String, dynamic>.from(item));
+          for (final tag in doc.tags) {
+            final key = tag.name.trim().toLowerCase();
+            if (key.isEmpty) continue;
+            if (!uniqueTags.containsKey(key)) {
+              uniqueTags[key] = {
+                'id': tag.id.isNotEmpty ? tag.id : 'tag_${DateTime.now().microsecondsSinceEpoch}',
+                'name': tag.name.trim(),
+                'category': tag.category,
+                'aliases_json': json.encode([]),
+                'usage_count': 1,
+                'code_system': tag.codeSystem,
+                'created_at': DateTime.now().millisecondsSinceEpoch,
+                'updated_at': DateTime.now().millisecondsSinceEpoch,
+              };
+            } else {
+              final existing = uniqueTags[key]!;
+              if ((existing['code_system'] == null || existing['code_system'].toString().isEmpty) &&
+                  tag.codeSystem != null &&
+                  tag.codeSystem!.isNotEmpty) {
+                existing['code_system'] = tag.codeSystem;
+              }
+            }
+          }
+        }
+      }
+
+      for (final tagData in uniqueTags.values) {
+        await txn.insert(
+          'tags',
+          tagData,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
 
       return true;

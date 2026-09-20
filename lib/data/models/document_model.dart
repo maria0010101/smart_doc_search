@@ -324,14 +324,17 @@ class TagDefinition {
   String toJson() => json.encode(toMap());
 
   factory TagDefinition.fromMap(Map<String, dynamic> map) {
+    final count = map['usageCount'] ?? map['usage_count'];
+    final created = map['createdAt'] ?? map['created_at'];
+    final updated = map['updatedAt'] ?? map['updated_at'];
     return TagDefinition(
       id: map['id'] ?? '',
       name: map['name'] ?? '',
       category: map['category'] ?? '主題',
       aliases: (map['aliases'] is List) ? (map['aliases'] as List).map((e) => e.toString()).toList() : [],
-      usageCount: (map['usageCount'] is num) ? (map['usageCount'] as num).toInt() : 0,
-      createdAt: (map['createdAt'] is num) ? (map['createdAt'] as num).toInt() : 0,
-      updatedAt: (map['updatedAt'] is num) ? (map['updatedAt'] as num).toInt() : 0,
+      usageCount: (count is num) ? count.toInt() : 0,
+      createdAt: (created is num) ? created.toInt() : 0,
+      updatedAt: (updated is num) ? updated.toInt() : 0,
       codeSystem: map['code_system'] ?? map['codeSystem'],
     );
   }

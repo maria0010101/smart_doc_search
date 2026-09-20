@@ -303,16 +303,33 @@ class DocumentRepository {
       }
     }
 
-    final migratedTags = <Map<String, dynamic>>[];
+    final Map<String, Map<String, dynamic>> deduplicatedTagsMap = {};
     for (final t in rawTags) {
       if (t is Map) {
         final tMap = Map<String, dynamic>.from(t);
         if (tMap['category'] == '疾病分類編碼' && tMap['code_system'] == null && tMap['codeSystem'] == null) {
           tMap['code_system'] = 'ICD-10-CM';
         }
-        migratedTags.add(tMap);
+        final name = (tMap['name'] ?? '').toString().trim();
+        final key = name.toLowerCase();
+        if (key.isEmpty) continue;
+
+        if (!deduplicatedTagsMap.containsKey(key)) {
+          deduplicatedTagsMap[key] = tMap;
+        } else {
+          final existing = deduplicatedTagsMap[key]!;
+          final c1 = (existing['usageCount'] ?? existing['usage_count'] ?? 0) as num;
+          final c2 = (tMap['usageCount'] ?? tMap['usage_count'] ?? 0) as num;
+          existing['usageCount'] = c1.toInt() + c2.toInt();
+          existing['usage_count'] = existing['usageCount'];
+          if ((existing['code_system'] == null || existing['code_system'] == '') &&
+              (tMap['code_system'] != null && tMap['code_system'] != '')) {
+            existing['code_system'] = tMap['code_system'];
+          }
+        }
       }
     }
+    final migratedTags = deduplicatedTagsMap.values.toList();
 
     final migratedPayload = json.encode({
       'version': '2.0',

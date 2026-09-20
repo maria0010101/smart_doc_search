@@ -235,11 +235,18 @@ class KoreDBNativeStore(private val context: Context) {
                 if (tagName.isNotEmpty()) {
                     tagInvertedIndex.computeIfAbsent(tagName) { mutableSetOf() }.add(docId)
 
-                    // Track in tagMetadata
+                    // Track in tagMetadata (ensure uniqueness by tag name)
                     val tagId = tagObj.optString("id", java.util.UUID.randomUUID().toString())
-                    if (!tagMetadata.containsKey(tagId)) {
+                    val existingTag = tagMetadata.values.find {
+                        it.optString("name", "").trim().equals(tagName, ignoreCase = true)
+                    }
+                    if (existingTag == null) {
                         tagObj.put("id", tagId)
                         tagMetadata[tagId] = tagObj
+                    } else {
+                        if (existingTag.optString("code_system").isEmpty() && tagObj.has("code_system")) {
+                            existingTag.put("code_system", tagObj.optString("code_system"))
+                        }
                     }
                 }
             }
@@ -534,7 +541,8 @@ class KoreDBNativeStore(private val context: Context) {
         val stats = JSONObject()
         stats.put("documentCount", documents.size)
         stats.put("pageCount", pages.values.sumOf { it.size })
-        stats.put("tagCount", tagMetadata.size)
+        val uniqueTagCount = tagMetadata.values.map { it.optString("name", "").trim().lowercase() }.filter { it.isNotEmpty() }.distinct().size
+        stats.put("tagCount", uniqueTagCount)
         stats.put("vectorCount", vectorEmbeddings.size)
 
         var totalSize = 0L
@@ -552,7 +560,14 @@ class KoreDBNativeStore(private val context: Context) {
         val pagesArr = JSONArray()
         pages.values.flatten().forEach { pagesArr.put(it) }
         val tagsArr = JSONArray()
-        tagMetadata.values.forEach { tagsArr.put(it) }
+        val exportedNames = mutableSetOf<String>()
+        tagMetadata.values.forEach { tag ->
+            val n = tag.optString("name", "").trim().lowercase()
+            if (n.isNotEmpty() && !exportedNames.contains(n)) {
+                exportedNames.add(n)
+                tagsArr.put(tag)
+            }
+        }
 
         root.put("version", "2.0")
         root.put("timestamp", System.currentTimeMillis())
@@ -577,11 +592,15 @@ class KoreDBNativeStore(private val context: Context) {
                     val doc = arr.getJSONObject(i)
                     val id = doc.getString("id")
                     documents[id] = doc
-                    if (doc.has("embedding") && !doc.isNull("embedding")) {
+
+                    if (doc.has("embedding")) {
                         val embArr = doc.getJSONArray("embedding")
                         val floats = FloatArray(embArr.length()) { idx -> embArr.getDouble(idx).toFloat() }
-                        if (floats.isNotEmpty()) vectorEmbeddings[id] = floats
+                        if (floats.isNotEmpty()) {
+                            vectorEmbeddings[id] = floats
+                        }
                     }
+
                     if (doc.has("tags")) {
                         val tags = doc.getJSONArray("tags")
                         for (t in 0 until tags.length()) {
@@ -605,9 +624,14 @@ class KoreDBNativeStore(private val context: Context) {
 
             if (root.has("tags")) {
                 val arr = root.getJSONArray("tags")
+                val restoredNames = mutableSetOf<String>()
                 for (i in 0 until arr.length()) {
                     val t = arr.getJSONObject(i)
-                    tagMetadata[t.getString("id")] = t
+                    val n = t.optString("name", "").trim().lowercase()
+                    if (n.isNotEmpty() && !restoredNames.contains(n)) {
+                        restoredNames.add(n)
+                        tagMetadata[t.optString("id", java.util.UUID.randomUUID().toString())] = t
+                    }
                 }
             }
 
