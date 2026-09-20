@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
@@ -423,7 +424,22 @@ class DocumentRepository {
     return dataSource.openFile(filePath);
   }
 
-  Future<String?> copyToDocuments(String sourcePath, String fileName) async {
-    return dataSource.copyToDocuments(sourcePath, fileName);
+  Future<String> getDefaultLiteratureDirectory() async {
+    return dataSource.getDefaultLiteratureDirectory();
+  }
+
+  Future<String> getEffectiveLiteratureDirectory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final customPath = prefs.getString(AppConstants.prefLiteratureStoragePath);
+      if (customPath != null && customPath.trim().isNotEmpty) {
+        return customPath.trim();
+      }
+    } catch (_) {}
+    return dataSource.getDefaultLiteratureDirectory();
+  }
+
+  Future<String?> copyToDocuments(String sourcePath, String fileName, {String? customTargetDir}) async {
+    return dataSource.copyToDocuments(sourcePath, fileName, customTargetDir: customTargetDir);
   }
 }

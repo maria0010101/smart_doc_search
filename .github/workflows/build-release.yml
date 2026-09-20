@@ -1,0 +1,113 @@
+name: Build and Release Windows 11 Desktop & Android APK
+
+on:
+  release:
+    types: [published, created]
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]+.[0-9]+*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows 11 Release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Compress Windows release bundle
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "v0.1.4" }
+          $zipName = "smart_doc_search-windows-$tag.zip"
+          Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath $zipName
+          Write-Host "Created $zipName successfully."
+
+      - name: Upload Windows zip to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.4' }}
+          files: smart_doc_search-windows-*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart_doc_search-windows
+          path: smart_doc_search-windows-*.zip
+
+  build-android:
+    name: Build Android Release APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Android APK
+        run: flutter build apk --release
+
+      - name: Prepare APK file
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [ -z "$TAG" ]; then TAG="v0.1.4"; fi
+          cp build/app/outputs/flutter-apk/app-release.apk "smart_doc_search-$TAG.apk"
+          ls -lh "smart_doc_search-$TAG.apk"
+
+      - name: Upload Android APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.4' }}
+          files: smart_doc_search-*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Android Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart_doc_search-apk
+          path: smart_doc_search-*.apk

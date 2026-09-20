@@ -158,16 +158,26 @@ class MainActivity : FlutterActivity() {
                             val blocks = PdfNativeProcessor.analyzeLayout(text)
                             runOnUiThread { result.success(blocks.toString()) }
                         }
+                        "getDefaultLiteratureDirectory" -> {
+                            try {
+                                val publicDocs = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
+                                val appFolder = java.io.File(publicDocs, "Smart_Doc")
+                                runOnUiThread { result.success(appFolder.absolutePath) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.success("/storage/emulated/0/Documents/Smart_Doc") }
+                            }
+                        }
                         "copyToDocuments" -> {
                             val sourcePath = call.argument<String>("sourcePath") ?: ""
                             val fileName = call.argument<String>("fileName") ?: ""
+                            val targetDir = call.argument<String>("targetDir")
                             val sourceFile = java.io.File(sourcePath)
                             if (!sourceFile.exists()) {
                                 runOnUiThread { result.error("FILE_NOT_FOUND", "檔案不存在: $sourcePath", null) }
                                 return@execute
                             }
                             try {
-                                val copiedPath = copyFileToDeviceDocuments(sourceFile, fileName)
+                                val copiedPath = copyFileToDeviceDocuments(sourceFile, fileName, targetDir)
                                 runOnUiThread { result.success(copiedPath) }
                             } catch (e: Exception) {
                                 runOnUiThread { result.error("COPY_ERROR", e.message, null) }
@@ -265,8 +275,25 @@ class MainActivity : FlutterActivity() {
      * Tries public /storage/emulated/0/Documents/Smart_Doc first,
      * then app-specific external Documents, and finally internal Documents.
      */
-    private fun copyFileToDeviceDocuments(sourceFile: java.io.File, preferredName: String): String {
+    private fun copyFileToDeviceDocuments(sourceFile: java.io.File, preferredName: String, customTargetDir: String? = null): String {
         val name = if (preferredName.isNotEmpty()) preferredName else sourceFile.name
+
+        // Strategy 0: Custom target directory (if specified by user)
+        if (!customTargetDir.isNullOrBlank()) {
+            try {
+                val customFolder = java.io.File(customTargetDir)
+                if (!customFolder.exists()) {
+                    customFolder.mkdirs()
+                }
+                if (customFolder.exists()) {
+                    val targetFile = java.io.File(customFolder, name)
+                    sourceFile.copyTo(targetFile, overwrite = true)
+                    if (targetFile.exists() && targetFile.length() > 0) {
+                        return targetFile.absolutePath
+                    }
+                }
+            } catch (_: Exception) {}
+        }
 
         // Strategy 1: Public Documents Directory (/storage/emulated/0/Documents/Smart_Doc)
         try {

@@ -392,12 +392,14 @@ class DocumentHit {
   final double score;
   final String? highlight;
   final List<String> matchedTags;
+  final int? pageNumber;
 
   DocumentHit({
     required this.document,
     required this.score,
     this.highlight,
     this.matchedTags = const [],
+    this.pageNumber,
   });
 
   factory DocumentHit.fromMap(Map<String, dynamic> map) {
@@ -408,6 +410,19 @@ class DocumentHit {
       matchedTags: (map['matchedTags'] is List)
           ? (map['matchedTags'] as List).map((e) => e.toString()).toList()
           : [],
+      pageNumber: (map['pageNumber'] is num)
+          ? (map['pageNumber'] as num).toInt()
+          : ((map['page_number'] is num) ? (map['page_number'] as num).toInt() : null),
     );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'document': document.toMap(),
+      'score': score,
+      'highlight': highlight,
+      'matchedTags': matchedTags,
+      'pageNumber': pageNumber,
+    };
   }
 }

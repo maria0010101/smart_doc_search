@@ -3,7 +3,9 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 
@@ -37,7 +39,8 @@ abstract class KoreDbDataSource {
   Future<List<Map<String, dynamic>>> renderPdfPages(String pdfPath, String outputDir, {int maxPages = 50});
   Future<List<LayoutBlock>> analyzeLayout(String text);
   Future<bool> openFile(String filePath);
-  Future<String?> copyToDocuments(String sourcePath, String fileName);
+  Future<String> getDefaultLiteratureDirectory();
+  Future<String?> copyToDocuments(String sourcePath, String fileName, {String? customTargetDir});
 }
 
 class KoreDbNativeDataSource implements KoreDbDataSource {
@@ -211,23 +214,59 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
     final hits = <DocumentHit>[];
 
     for (final doc in candidates) {
-      final pageTexts = (_fallbackPages[doc.id] ?? []).map((p) => p.ocrText).join(' ');
+      final docPages = _fallbackPages[doc.id] ?? [];
+      final pageTexts = docPages.map((p) => p.ocrText).join(' ');
       final fullText = '${doc.title} ${doc.summary} $pageTexts';
 
       double kwScore = 0.0;
       String? highlight;
+      int? matchedPageNumber;
+
       if (keywords.isNotEmpty) {
-        for (final kw in keywords) {
-          final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(fullText).length;
-          if (count > 0) {
-            kwScore += count * 1.5 / (count + 1.0);
-            if (highlight == null) {
-              final idx = fullText.toLowerCase().indexOf(kw.toLowerCase());
-              final start = max(0, idx - 30);
-              final end = min(fullText.length, idx + kw.length + 30);
-              highlight = '...${fullText.substring(start, end).trim()}...';
+        // 1. Check individual pages first for accurate page attribution
+        for (final page in docPages) {
+          for (final kw in keywords) {
+            final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(page.ocrText).length;
+            if (count > 0) {
+              kwScore += count * 1.5 / (count + 1.0);
+              if (highlight == null) {
+                final idx = page.ocrText.toLowerCase().indexOf(kw.toLowerCase());
+                final start = max(0, idx - 50);
+                final end = min(page.ocrText.length, idx + kw.length + 50);
+                highlight = '...${page.ocrText.substring(start, end).trim()}...';
+                matchedPageNumber = page.pageNumber;
+              }
             }
           }
+        }
+
+        // 2. Fallback check across title and summary
+        if (highlight == null) {
+          for (final kw in keywords) {
+            final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(fullText).length;
+            if (count > 0) {
+              kwScore += count * 1.5 / (count + 1.0);
+              if (highlight == null) {
+                final idx = fullText.toLowerCase().indexOf(kw.toLowerCase());
+                final start = max(0, idx - 50);
+                final end = min(fullText.length, idx + kw.length + 50);
+                highlight = '...${fullText.substring(start, end).trim()}...';
+                matchedPageNumber = 1;
+              }
+            }
+          }
+        }
+      }
+
+      // If page number not determined from keywords, check summary citations or page count
+      if (matchedPageNumber == null) {
+        final pageRegex = RegExp(r'(\(|【|\[)(P\.?\s*([0-9]+)|第\s*([0-9]+)\s*頁)(\)|】|\])', caseSensitive: false);
+        final match = pageRegex.firstMatch(doc.summary);
+        if (match != null) {
+          final pageStr = match.group(3) ?? match.group(4);
+          matchedPageNumber = int.tryParse(pageStr ?? '');
+        } else if (doc.pageCount == 1) {
+          matchedPageNumber = 1;
         }
       }
 
@@ -259,6 +298,7 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
         score: score,
         highlight: highlight,
         matchedTags: matchedTags,
+        pageNumber: matchedPageNumber,
       ));
     }
 
@@ -561,24 +601,56 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
   }
 
   @override
-  Future<String?> copyToDocuments(String sourcePath, String fileName) async {
+  Future<String> getDefaultLiteratureDirectory() async {
     if (_isAndroidPlatform()) {
       try {
-        final res = await _toolsChannel.invokeMethod<String>('copyToDocuments', {
+        final res = await _toolsChannel.invokeMethod<String>('getDefaultLiteratureDirectory');
+        if (res != null && res.isNotEmpty) return res;
+      } catch (e) {
+        debugPrint('getDefaultLiteratureDirectory native error: $e');
+      }
+    }
+    final appDir = await getApplicationDocumentsDirectory();
+    return '${appDir.path}/Documents/Smart_Doc';
+  }
+
+  @override
+  Future<String?> copyToDocuments(String sourcePath, String fileName, {String? customTargetDir}) async {
+    String? configuredDir = customTargetDir;
+    if (configuredDir == null || configuredDir.trim().isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      configuredDir = prefs.getString(AppConstants.prefLiteratureStoragePath);
+    }
+    if (configuredDir != null && configuredDir.trim().isEmpty) {
+      configuredDir = null;
+    }
+
+    if (_isAndroidPlatform()) {
+      try {
+        final args = <String, dynamic>{
           'sourcePath': sourcePath,
           'fileName': fileName,
-        });
+        };
+        if (configuredDir != null) {
+          args['targetDir'] = configuredDir;
+        }
+        final res = await _toolsChannel.invokeMethod<String>('copyToDocuments', args);
         if (res != null && res.isNotEmpty) return res;
       } catch (e) {
         debugPrint('copyToDocuments native error: $e');
       }
     }
-    // Fallback: Copy to application documents folder
+    // Fallback: Copy to configured directory or application documents folder
     try {
-      final appDir = await getApplicationDocumentsDirectory();
-      final docsDir = Directory('${appDir.path}/Documents/Smart_Doc');
-      if (!await docsDir.exists()) await docsDir.create(recursive: true);
-      final dest = File('${docsDir.path}/$fileName');
+      Directory targetFolder;
+      if (configuredDir != null && configuredDir.isNotEmpty) {
+        targetFolder = Directory(configuredDir);
+      } else {
+        final appDir = await getApplicationDocumentsDirectory();
+        targetFolder = Directory('${appDir.path}/Documents/Smart_Doc');
+      }
+      if (!await targetFolder.exists()) await targetFolder.create(recursive: true);
+      final dest = File(p.join(targetFolder.path, fileName));
       await File(sourcePath).copy(dest.path);
       return dest.path;
     } catch (e) {

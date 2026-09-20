@@ -522,13 +522,32 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
+  String? _resolvePageNumberDisplay(DocumentHit hit) {
+    if (hit.pageNumber != null && hit.pageNumber! > 0) {
+      return '${hit.pageNumber}';
+    }
+    final textToCheck = '${hit.highlight ?? ''} ${hit.document.summary}';
+    final pageRegex = RegExp(r'(?:P\.?\s*([0-9]+(?:-[0-9]+)?)|第\s*([0-9]+(?:-[0-9]+)?)\s*頁)', caseSensitive: false);
+    final match = pageRegex.firstMatch(textToCheck);
+    if (match != null) {
+      return match.group(1) ?? match.group(2);
+    }
+    if (hit.document.pageCount == 1) {
+      return '1';
+    }
+    return null;
+  }
+
   Widget _buildDocumentHitCard(DocumentHit hit) {
     final doc = hit.document;
     final scorePercent = (hit.score * 100).clamp(0, 100).toStringAsFixed(0);
     final dateFormat = DateFormat('yyyy-MM-dd');
+    final pageDisplay = _resolvePageNumberDisplay(hit);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () async {
@@ -549,11 +568,37 @@ class _SearchScreenState extends State<SearchScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Title & Score Badge
+              // Title, Badges & Score
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildSourceBadge(doc.sourceType),
+                  if (pageDisplay != null) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.teal.withValues(alpha: 0.4)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.bookmark_outline, size: 12, color: Colors.teal),
+                          const SizedBox(width: 3),
+                          Text(
+                            '第 $pageDisplay 頁',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.teal,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -579,23 +624,60 @@ class _SearchScreenState extends State<SearchScreen> {
                 ],
               ),
 
-              // Highlight snippet
+              // Highlight snippet (原文全文命中片段與來源頁數)
               if (hit.highlight != null) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: Colors.amber.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(6),
+                    color: Colors.amber.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
                   ),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.format_quote, size: 16, color: Colors.amber),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          hit.highlight!,
-                          style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+                      Row(
+                        children: [
+                          const Icon(Icons.format_quote, size: 15, color: Colors.amber),
+                          const SizedBox(width: 5),
+                          Text(
+                            '原文命中引註',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.amber.shade900,
+                            ),
+                          ),
+                          if (pageDisplay != null) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.shade200,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                '第 $pageDisplay 頁',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.brown.shade800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        hit.highlight!,
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          height: 1.4,
+                          fontStyle: FontStyle.italic,
                         ),
                       ),
                     ],
@@ -603,18 +685,66 @@ class _SearchScreenState extends State<SearchScreen> {
                 ),
               ],
 
-              // Summary
-              if (hit.highlight == null && doc.summary.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  doc.summary,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
+              // Literature Summary (增加顯示行數至 6 行，提供更多原始文獻摘要與頁數資訊)
+              if (doc.summary.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
                     color: Theme.of(context).brightness == Brightness.dark
-                        ? Colors.grey.shade300
-                        : Colors.grey.shade700,
+                        ? Colors.grey.shade900
+                        : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.notes_rounded, size: 14, color: Colors.blueGrey.shade700),
+                          const SizedBox(width: 5),
+                          Text(
+                            '文獻摘要內容',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blueGrey.shade700,
+                            ),
+                          ),
+                          if (hit.highlight == null && pageDisplay != null) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.teal.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                '來源：第 $pageDisplay 頁',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.teal,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        doc.summary,
+                        maxLines: 6,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.45,
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? Colors.grey.shade200
+                              : Colors.grey.shade800,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -655,9 +785,13 @@ class _SearchScreenState extends State<SearchScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    '${dateFormat.format(DateTime.fromMillisecondsSinceEpoch(doc.createdAt))} • ${doc.pageCount} 頁 • ${doc.language}',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                  Expanded(
+                    child: Text(
+                      '${dateFormat.format(DateTime.fromMillisecondsSinceEpoch(doc.createdAt))} • 全文共 ${doc.pageCount} 頁 • ${doc.language}'
+                      '${pageDisplay != null ? ' • 標示第 $pageDisplay 頁' : ''}',
+                      style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                   Icon(Icons.chevron_right, size: 18, color: Colors.grey.shade400),
                 ],

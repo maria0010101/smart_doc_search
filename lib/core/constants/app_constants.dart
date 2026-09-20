@@ -20,7 +20,7 @@ enum AiProvider {
 
 class AppConstants {
   // App Version
-  static const String appVersion = '0.1.3';
+  static const String appVersion = '0.1.4';
 
   // Database & Native Channel
   static const String koredbChannel = 'com.smartdoc.search/koredb';
@@ -156,4 +156,5 @@ class AppConstants {
   static const String prefDarkMode = 'pref_dark_mode';
   static const String prefEnableVector = 'pref_enable_vector';
   static const String prefDiseaseClassificationMode = 'pref_disease_classification_mode';
+  static const String prefLiteratureStoragePath = 'pref_literature_storage_path';
 }

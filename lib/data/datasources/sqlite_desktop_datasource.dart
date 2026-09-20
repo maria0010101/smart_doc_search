@@ -4,7 +4,9 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 
@@ -316,32 +318,72 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
       }).toList();
     }
 
-    // Load all pages for full-text search
-    final pagesRows = await db.query('pages');
-    final Map<String, List<String>> docTexts = {};
+    // Load all pages for full-text search and page matching
+    final pagesRows = await db.query('pages', orderBy: 'page_number ASC');
+    final Map<String, List<Map<String, dynamic>>> docPages = {};
     for (final r in pagesRows) {
       final docId = r['document_id'] as String;
-      final text = (r['ocr_text'] ?? '') as String;
-      docTexts.putIfAbsent(docId, () => []).add(text);
+      docPages.putIfAbsent(docId, () => []).add(r);
     }
 
     // 2. Score candidates
     final scored = <DocumentHit>[];
     for (final doc in candidates) {
-      final allPageText = (docTexts[doc.id] ?? []).join(' ');
-      final fullText = '${doc.title} ${doc.summary} $allPageText';
+      final pages = docPages[doc.id] ?? [];
+      final pageTexts = pages.map((p) => (p['ocr_text'] ?? '') as String).join(' ');
+      final fullText = '${doc.title} ${doc.summary} $pageTexts';
 
       double kwScore = 0.0;
       String? snippet;
+      int? matchedPageNumber;
+
       if (keywords.isNotEmpty) {
-        for (final kw in keywords) {
-          if (fullText.toLowerCase().contains(kw.toLowerCase())) {
-            kwScore += 1.0;
-            final idx = fullText.toLowerCase().indexOf(kw.toLowerCase());
-            final start = max(0, idx - 40);
-            final end = min(fullText.length, idx + kw.length + 40);
-            snippet = '...${fullText.substring(start, end).trim()}...';
+        // 1. Check individual pages first for accurate page attribution
+        for (final p in pages) {
+          final pText = (p['ocr_text'] ?? '') as String;
+          final pNum = (p['page_number'] as num?)?.toInt() ?? 1;
+          for (final kw in keywords) {
+            final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(pText).length;
+            if (count > 0) {
+              kwScore += count * 1.5 / (count + 1.0);
+              if (snippet == null) {
+                final idx = pText.toLowerCase().indexOf(kw.toLowerCase());
+                final start = max(0, idx - 50);
+                final end = min(pText.length, idx + kw.length + 50);
+                snippet = '...${pText.substring(start, end).trim()}...';
+                matchedPageNumber = pNum;
+              }
+            }
           }
+        }
+
+        // 2. Fallback check across title and summary
+        if (snippet == null) {
+          for (final kw in keywords) {
+            final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(fullText).length;
+            if (count > 0) {
+              kwScore += count * 1.5 / (count + 1.0);
+              if (snippet == null) {
+                final idx = fullText.toLowerCase().indexOf(kw.toLowerCase());
+                final start = max(0, idx - 50);
+                final end = min(fullText.length, idx + kw.length + 50);
+                snippet = '...${fullText.substring(start, end).trim()}...';
+                matchedPageNumber = 1;
+              }
+            }
+          }
+        }
+      }
+
+      // If page number not determined from keywords, check summary citations or page count
+      if (matchedPageNumber == null) {
+        final pageRegex = RegExp(r'(\(|【|\[)(P\.?\s*([0-9]+)|第\s*([0-9]+)\s*頁)(\)|】|\])', caseSensitive: false);
+        final match = pageRegex.firstMatch(doc.summary);
+        if (match != null) {
+          final pageStr = match.group(3) ?? match.group(4);
+          matchedPageNumber = int.tryParse(pageStr ?? '');
+        } else if (doc.pageCount == 1) {
+          matchedPageNumber = 1;
         }
       }
 
@@ -364,7 +406,7 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
 
       double totalScore = (keywords.isEmpty && semanticEmbedding == null && tags.isEmpty)
           ? 1.0
-          : (0.4 * kwScore) + (0.4 * vecScore) + (0.2 * tagScore);
+          : (AppConstants.weightKeyword * kwScore) + (AppConstants.weightVector * vecScore) + (AppConstants.weightTag * tagScore);
 
       if (totalScore > 0 || (keywords.isEmpty && tags.isEmpty)) {
         scored.add(DocumentHit(
@@ -372,6 +414,7 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
           score: totalScore,
           highlight: snippet,
           matchedTags: matchedTags,
+          pageNumber: matchedPageNumber,
         ));
       }
     }
@@ -767,7 +810,22 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
     try {
       File file = File(filePath);
       if (!await file.exists()) {
-        // Fallback: Check in system Documents/Smart_Doc/ or legacy folders
+        final fileName = p.basename(filePath);
+        // Fallback 1: Check user custom literature directory if set
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          final customPath = prefs.getString(AppConstants.prefLiteratureStoragePath);
+          if (customPath != null && customPath.trim().isNotEmpty) {
+            final candCustom = File(p.join(customPath.trim(), fileName));
+            if (await candCustom.exists()) {
+              file = candCustom;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!await file.exists()) {
+        // Fallback 2: Check in system Documents/Smart_Doc/ or legacy folders
         final appDir = await getApplicationDocumentsDirectory();
         final fileName = p.basename(filePath);
         final candidate1 = File(p.join(appDir.path, 'Smart_Doc', fileName));
@@ -799,10 +857,30 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
   }
 
   @override
-  Future<String?> copyToDocuments(String sourcePath, String fileName) async {
+  Future<String> getDefaultLiteratureDirectory() async {
     try {
       final appDir = await getApplicationDocumentsDirectory();
-      final targetFolder = Directory(p.join(appDir.path, 'Smart_Doc'));
+      return p.join(appDir.path, 'Smart_Doc');
+    } catch (e) {
+      return p.join(Directory.current.path, 'Smart_Doc');
+    }
+  }
+
+  @override
+  Future<String?> copyToDocuments(String sourcePath, String fileName, {String? customTargetDir}) async {
+    try {
+      String targetDirPath = customTargetDir ?? '';
+      if (targetDirPath.isEmpty) {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          targetDirPath = prefs.getString(AppConstants.prefLiteratureStoragePath) ?? '';
+        } catch (_) {}
+      }
+      if (targetDirPath.isEmpty) {
+        targetDirPath = await getDefaultLiteratureDirectory();
+      }
+
+      final targetFolder = Directory(targetDirPath);
       if (!await targetFolder.exists()) {
         await targetFolder.create(recursive: true);
       }

@@ -84,6 +84,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, dynamic> _storageStats = {};
   bool _isLoadingStats = true;
 
+  // Literature File Storage Path
+  String _defaultLiteraturePath = '';
+  String _customLiteraturePath = '';
+
   @override
   void initState() {
     super.initState();
@@ -164,8 +168,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _diseaseClassificationMode = prefs.getBool(AppConstants.prefDiseaseClassificationMode) ?? true;
       widget.ollamaClient.diseaseClassificationMode = _diseaseClassificationMode;
 
+      _customLiteraturePath = prefs.getString(AppConstants.prefLiteratureStoragePath) ?? '';
+
       _updateAvailableModelsList();
     });
+
+    final defaultDir = await widget.repository.getDefaultLiteratureDirectory();
+    if (mounted) {
+      setState(() {
+        _defaultLiteraturePath = defaultDir;
+      });
+    }
   }
 
   void _updateAvailableModelsList() {
@@ -655,6 +668,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           // Section: AI Provider Selection & Settings
           _buildAiProviderCard(),
+
+          const SizedBox(height: 14),
+
+          // Section: Literature Original File Storage Path
+          _buildLiteratureStorageCard(),
 
           const SizedBox(height: 14),
 
@@ -1212,6 +1230,300 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 2),
         Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
       ],
+    );
+  }
+
+  Future<void> _pickLiteratureDirectory() async {
+    try {
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '請選擇文獻匯入原始檔存放資料夾',
+      );
+      if (selectedDirectory != null && selectedDirectory.trim().isNotEmpty) {
+        final path = selectedDirectory.trim();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(AppConstants.prefLiteratureStoragePath, path);
+        setState(() {
+          _customLiteraturePath = path;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('已設定文獻存檔路徑：$path'),
+              backgroundColor: Colors.teal,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('選擇資料夾失敗: $e，您可點擊「手動輸入路徑」直接指定'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _manualInputLiteratureDirectory() async {
+    final effectivePath = _customLiteraturePath.isNotEmpty ? _customLiteraturePath : _defaultLiteraturePath;
+    final controller = TextEditingController(text: effectivePath);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.edit_location_alt, color: Colors.indigo),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '手動指定文獻存檔路徑',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '請輸入或貼上本機資料夾之絕對路徑：',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: '例如: D:\\Literature 或 /storage/emulated/0/Documents/Smart_Doc',
+                prefixIcon: Icon(Icons.folder_outlined),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('確認儲存'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && controller.text.trim().isNotEmpty) {
+      final path = controller.text.trim();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(AppConstants.prefLiteratureStoragePath, path);
+      setState(() {
+        _customLiteraturePath = path;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('已手動設定文獻存檔路徑：$path'),
+            backgroundColor: Colors.teal,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _resetLiteratureDirectory() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重設存檔路徑確認'),
+        content: Text('確定要恢復為系統預設存檔路徑嗎？\n\n預設路徑：\n$_defaultLiteraturePath'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('恢復預設'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(AppConstants.prefLiteratureStoragePath);
+      setState(() {
+        _customLiteraturePath = '';
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('已恢復為系統預設存檔路徑：$_defaultLiteraturePath'),
+            backgroundColor: Colors.teal,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildLiteratureStorageCard() {
+    final isCustom = _customLiteraturePath.isNotEmpty;
+    final effectivePath = isCustom
+        ? _customLiteraturePath
+        : (_defaultLiteraturePath.isNotEmpty ? _defaultLiteraturePath : '載入中...');
+
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.folder_special, color: Colors.deepPurple),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    '文獻原始檔存檔路徑設定',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: (isCustom ? Colors.deepPurple : Colors.teal).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: (isCustom ? Colors.deepPurple : Colors.teal).withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Text(
+                    isCustom ? '使用者自訂' : '系統預設',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: isCustom ? Colors.deepPurple : Colors.teal,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '指定匯入後原始文獻檔案 (PDF/PPT/TXT) 之本地儲存資料夾。開啟文獻時，系統將優先調用此路徑檔案。',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 12),
+
+            // Path display container
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.grey.shade900
+                    : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        isCustom ? Icons.folder_shared : Icons.folder,
+                        size: 16,
+                        color: isCustom ? Colors.deepPurple : Colors.teal,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        isCustom ? '自訂儲存目錄：' : '目前預設目錄：',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: isCustom ? Colors.deepPurple : Colors.teal,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  SelectableText(
+                    effectivePath,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w500,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Action Buttons
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.deepPurple,
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: const Icon(Icons.folder_open, size: 16),
+                  label: const Text('選擇資料夾'),
+                  onPressed: _pickLiteratureDirectory,
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.edit_note, size: 16),
+                  label: const Text('手動輸入路徑'),
+                  onPressed: _manualInputLiteratureDirectory,
+                ),
+                if (isCustom)
+                  TextButton.icon(
+                    style: TextButton.styleFrom(foregroundColor: Colors.teal),
+                    icon: const Icon(Icons.restore, size: 16),
+                    label: const Text('恢復系統預設'),
+                    onPressed: _resetLiteratureDirectory,
+                  ),
+              ],
+            ),
+
+            const SizedBox(height: 10),
+
+            // Tip note
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.blue.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline, size: 16, color: Colors.blue),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '• Windows 系統預設位置：我的文件\\Smart_Doc\n'
+                      '• Android 手機預設位置：/storage/emulated/0/Documents/Smart_Doc\n'
+                      '如需存至外部記憶卡、下載資料夾或指定特定硬碟資料夾，可自由選擇或手動輸入。',
+                      style: TextStyle(fontSize: 11.5, color: Colors.blueGrey.shade800, height: 1.35),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
