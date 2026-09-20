@@ -283,6 +283,8 @@ class OllamaClient {
     List<String>? dimensions,
     String? model,
     String? mode,
+    String? customPrompt,
+    CancelToken? cancelToken,
     int maxRetries = 3,
   }) async {
     final targetModel = model ?? textModel;
@@ -291,22 +293,22 @@ class OllamaClient {
     final analysisMode = mode ?? (diseaseClassificationMode ? 'medical_classification' : 'general');
 
     if (isFastApi || provider == AiProvider.fastapi) {
-      return _generateAnalysisViaFastApi(cleanHost, targetModel, text, imageBase64, dims, analysisMode);
+      return _generateAnalysisViaFastApi(cleanHost, targetModel, text, imageBase64, dims, analysisMode, customPrompt: customPrompt, cancelToken: cancelToken);
     }
 
     switch (provider) {
       case AiProvider.ollama:
-        return _generateAnalysisViaOllamaWithRetry(cleanHost, targetModel, text, dims, maxRetries, analysisMode);
+        return _generateAnalysisViaOllamaWithRetry(cleanHost, targetModel, text, dims, maxRetries, analysisMode, customPrompt: customPrompt, cancelToken: cancelToken);
       case AiProvider.deepseek:
-        return _generateAnalysisViaOpenAiCompatible(cleanHost, targetModel, text, dims, maxRetries, isDeepSeek: true, mode: analysisMode);
+        return _generateAnalysisViaOpenAiCompatible(cleanHost, targetModel, text, dims, maxRetries, isDeepSeek: true, mode: analysisMode, customPrompt: customPrompt, cancelToken: cancelToken);
       case AiProvider.openai:
-        return _generateAnalysisViaOpenAiCompatible(cleanHost, targetModel, text, dims, maxRetries, isDeepSeek: false, mode: analysisMode);
+        return _generateAnalysisViaOpenAiCompatible(cleanHost, targetModel, text, dims, maxRetries, isDeepSeek: false, mode: analysisMode, customPrompt: customPrompt, cancelToken: cancelToken);
       case AiProvider.claude:
-        return _generateAnalysisViaClaude(cleanHost, targetModel, text, dims, maxRetries, analysisMode);
+        return _generateAnalysisViaClaude(cleanHost, targetModel, text, dims, maxRetries, analysisMode, customPrompt: customPrompt, cancelToken: cancelToken);
       case AiProvider.google:
-        return _generateAnalysisViaGoogle(cleanHost, targetModel, text, dims, maxRetries, analysisMode);
+        return _generateAnalysisViaGoogle(cleanHost, targetModel, text, dims, maxRetries, analysisMode, customPrompt: customPrompt, cancelToken: cancelToken);
       case AiProvider.fastapi:
-        return _generateAnalysisViaFastApi(cleanHost, targetModel, text, imageBase64, dims, analysisMode);
+        return _generateAnalysisViaFastApi(cleanHost, targetModel, text, imageBase64, dims, analysisMode, customPrompt: customPrompt, cancelToken: cancelToken);
     }
   }
 
@@ -334,8 +336,10 @@ class OllamaClient {
     String text,
     String? imageBase64,
     List<String> dims,
-    String mode,
-  ) async {
+    String mode, {
+    String? customPrompt,
+    CancelToken? cancelToken,
+  }) async {
     try {
       final res = await _dio.post(
         '$targetHost/generate-tags',
@@ -345,7 +349,9 @@ class OllamaClient {
           'dimensions': dims,
           'model': model,
           'mode': mode,
+          if (customPrompt != null && customPrompt.trim().isNotEmpty) 'custom_prompt': customPrompt.trim(),
         },
+        cancelToken: cancelToken,
       );
       if (res.statusCode == 200 && res.data is Map) {
         final List rawTags = res.data['tags'] ?? [];
@@ -358,6 +364,7 @@ class OllamaClient {
         );
       }
     } catch (e) {
+      if (cancelToken?.isCancelled == true) rethrow;
       debugPrint('FastAPI generate-tags error: $e');
       rethrow;
     }
@@ -370,12 +377,17 @@ class OllamaClient {
     String text,
     List<String> dims,
     int maxRetries,
-    String mode,
-  ) async {
+    String mode, {
+    String? customPrompt,
+    CancelToken? cancelToken,
+  }) async {
     int attempts = 0;
-    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
+    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode, customPrompt: customPrompt);
 
     while (attempts < maxRetries) {
+      if (cancelToken?.isCancelled == true) {
+        throw DioException(requestOptions: RequestOptions(path: targetHost), type: DioExceptionType.cancel);
+      }
       attempts++;
       try {
         final payload = {
@@ -394,6 +406,7 @@ class OllamaClient {
           '$targetHost/api/chat',
           data: payload,
           options: Options(headers: {'Content-Type': 'application/json'}),
+          cancelToken: cancelToken,
         );
 
         if (response.statusCode == 200 && response.data != null) {
@@ -404,11 +417,12 @@ class OllamaClient {
           }
         }
       } catch (e) {
+        if (cancelToken?.isCancelled == true) rethrow;
         debugPrint('Ollama analysis attempt $attempts failed: $e');
         if (attempts >= maxRetries) rethrow;
       }
 
-      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
+      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode, customPrompt: customPrompt);
       await Future.delayed(Duration(milliseconds: 500 * attempts));
     }
 
@@ -423,9 +437,11 @@ class OllamaClient {
     int maxRetries, {
     required bool isDeepSeek,
     required String mode,
+    String? customPrompt,
+    CancelToken? cancelToken,
   }) async {
     int attempts = 0;
-    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
+    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode, customPrompt: customPrompt);
 
     final url = targetHost.endsWith('/chat/completions')
         ? targetHost
@@ -439,6 +455,9 @@ class OllamaClient {
         : '你是一個精準的綜合學術文獻深度分析助手。請嚴格以 JSON 格式回應，包含主題/領域/方法等特徵標籤、條列式核心摘要（附帶原文來源頁碼 (P.X)）與英文文獻繁體中文對照說明。';
 
     while (attempts < maxRetries) {
+      if (cancelToken?.isCancelled == true) {
+        throw DioException(requestOptions: RequestOptions(path: url), type: DioExceptionType.cancel);
+      }
       attempts++;
       try {
         final payload = {
@@ -464,6 +483,7 @@ class OllamaClient {
             'Authorization': 'Bearer ${apiKey.trim()}',
             'Content-Type': 'application/json',
           }),
+          cancelToken: cancelToken,
         );
 
         if (response.statusCode == 200 && response.data != null) {
@@ -474,11 +494,12 @@ class OllamaClient {
           }
         }
       } catch (e) {
+        if (cancelToken?.isCancelled == true) rethrow;
         debugPrint('OpenAI/DeepSeek analysis attempt $attempts failed: $e');
         if (attempts >= maxRetries) rethrow;
       }
 
-      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
+      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode, customPrompt: customPrompt);
       await Future.delayed(Duration(milliseconds: 500 * attempts));
     }
 
@@ -491,10 +512,12 @@ class OllamaClient {
     String text,
     List<String> dims,
     int maxRetries,
-    String mode,
-  ) async {
+    String mode, {
+    String? customPrompt,
+    CancelToken? cancelToken,
+  }) async {
     int attempts = 0;
-    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
+    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode, customPrompt: customPrompt);
     final url = '$targetHost/messages';
     final bool isMedicalMode = mode == 'medical_classification';
     final systemPrompt = isMedicalMode
@@ -502,6 +525,9 @@ class OllamaClient {
         : '你是一個精準的綜合學術文獻深度分析助手。請嚴格以 JSON 格式輸出結構化分析，包含主題/領域/方法特徵標籤、條列式核心摘要（附帶原文來源頁碼 (P.X)）及英文文獻中文對照說明。勿輸出任何 markdown 區塊外的文字。';
 
     while (attempts < maxRetries) {
+      if (cancelToken?.isCancelled == true) {
+        throw DioException(requestOptions: RequestOptions(path: url), type: DioExceptionType.cancel);
+      }
       attempts++;
       try {
         final payload = {
@@ -524,6 +550,7 @@ class OllamaClient {
             'anthropic-version': '2023-06-01',
             'Content-Type': 'application/json',
           }),
+          cancelToken: cancelToken,
         );
 
         if (response.statusCode == 200 && response.data != null) {
@@ -537,11 +564,12 @@ class OllamaClient {
           }
         }
       } catch (e) {
+        if (cancelToken?.isCancelled == true) rethrow;
         debugPrint('Claude analysis attempt $attempts failed: $e');
         if (attempts >= maxRetries) rethrow;
       }
 
-      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
+      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode, customPrompt: customPrompt);
       await Future.delayed(Duration(milliseconds: 500 * attempts));
     }
 
@@ -554,13 +582,18 @@ class OllamaClient {
     String text,
     List<String> dims,
     int maxRetries,
-    String mode,
-  ) async {
+    String mode, {
+    String? customPrompt,
+    CancelToken? cancelToken,
+  }) async {
     int attempts = 0;
-    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
+    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode, customPrompt: customPrompt);
     final url = '$targetHost/models/$model:generateContent';
 
     while (attempts < maxRetries) {
+      if (cancelToken?.isCancelled == true) {
+        throw DioException(requestOptions: RequestOptions(path: url), type: DioExceptionType.cancel);
+      }
       attempts++;
       try {
         final payload = {
@@ -582,6 +615,7 @@ class OllamaClient {
           queryParameters: {'key': apiKey.trim()},
           data: payload,
           options: Options(headers: {'Content-Type': 'application/json'}),
+          cancelToken: cancelToken,
         );
 
         if (response.statusCode == 200 && response.data != null) {
@@ -598,11 +632,12 @@ class OllamaClient {
           }
         }
       } catch (e) {
+        if (cancelToken?.isCancelled == true) rethrow;
         debugPrint('Google Gemini analysis attempt $attempts failed: $e');
         if (attempts >= maxRetries) rethrow;
       }
 
-      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
+      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode, customPrompt: customPrompt);
       await Future.delayed(Duration(milliseconds: 500 * attempts));
     }
 
@@ -615,10 +650,40 @@ class OllamaClient {
     List<String>? dims,
     int attempt = 0,
     String? mode,
+    String? customPrompt,
   }) {
     final effectiveMode = mode ?? (diseaseClassificationMode ? 'medical_classification' : 'general');
     final effectiveDims = dims ?? AppConstants.defaultTagDimensions;
-    return _buildAnalysisPrompt(text, effectiveDims, attempt: attempt, mode: effectiveMode);
+    return _buildAnalysisPrompt(text, effectiveDims, attempt: attempt, mode: effectiveMode, customPrompt: customPrompt);
+  }
+
+  /// Returns a user-friendly error message based on error type and HTTP status
+  String getFriendlyErrorMessage(dynamic e) {
+    if (e is DioException) {
+      if (e.type == DioExceptionType.cancel) {
+        return '已取消分析請求';
+      }
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.sendTimeout) {
+        return '請求逾時，請檢查網路連線或稍後再試';
+      }
+      final statusCode = e.response?.statusCode;
+      if (statusCode == 401 || statusCode == 403) {
+        return 'API KEY 無效或未授權，請至設定確認 API KEY';
+      }
+      if (statusCode == 429) {
+        return 'API 呼叫額度不足或請求頻繁，請稍後再試';
+      }
+      if (statusCode == 404) {
+        return '端點或模型名稱錯誤 (404)，請檢查設定';
+      }
+      if (e.message != null && e.message!.isNotEmpty) {
+        return '連線異常: ${e.message}';
+      }
+    }
+    final str = e.toString().replaceFirst('Exception: ', '');
+    return str.isNotEmpty ? str : 'AI 分析請求失敗，請稍後再試';
   }
 
   String _buildAnalysisPrompt(
@@ -626,11 +691,15 @@ class OllamaClient {
     List<String> dims, {
     int attempt = 0,
     String mode = 'medical_classification',
+    String? customPrompt,
   }) {
     // Expand to modern LLM capacity (up to 35,000 characters)
     final truncatedText = text.length > 35000 ? text.substring(0, 35000) : text;
     final dimListStr = dims.join('、');
     final bool isMedicalMode = (mode == 'medical_classification');
+    final customPromptBlock = (customPrompt != null && customPrompt.trim().isNotEmpty)
+        ? '\n\n【使用者自訂進階指示】：\n${customPrompt.trim()}\n請在分析時特別遵守並結合上述自訂指示。\n'
+        : '';
 
     if (isMedicalMode) {
       return '''你是一個專業的醫學與疾病分類深度分析專家。請仔細閱讀下方提供的【文獻完整全文內容】，進行全面深度分析、多維特徵辨識、醫學術語抽取、疾病與症狀分類編碼，並撰寫條列式結構化摘要。
@@ -663,7 +732,7 @@ class OllamaClient {
     • 【臨床注意事項與併發症考量】(P.X) ...
 - 【關鍵規定 - 來源頁碼】：每一條列項目必須附帶原文來源頁碼（如 (P.1)、(P.2) 或 (P.1-P.2) 等），方便使用者精準回溯原文！
 - 若原文為英文或外文，chinese_summary 必須提供詳盡的條列式繁體中文摘要說明並附帶來源頁碼。
-
+$customPromptBlock
 請嚴格輸出合法的 JSON 格式，不要輸出任何額外文字：
 {
   "detected_language": "en 或 zh",
@@ -710,7 +779,7 @@ $truncatedText
     • 【建議措施與實施方針】(P.X) ...
 - 【關鍵規定 - 來源頁碼】：每一條列項目必須附帶原文來源頁碼（如 (P.1)、(P.2) 等），方便使用者精準回溯原文！
 - 若原文為英文或外文，chinese_summary 必須提供詳盡的條列式繁體中文摘要說明並附帶來源頁碼。
-
+$customPromptBlock
 請嚴格輸出合法的 JSON 格式，不要輸出任何額外文字：
 {
   "detected_language": "en 或 zh",

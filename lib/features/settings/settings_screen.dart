@@ -4,8 +4,10 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
+import 'package:smart_doc_search/core/utils/security_util.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
+import 'package:smart_doc_search/features/analysis/ai_analysis_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   final DocumentRepository repository;
@@ -138,23 +140,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _fastApiHostCtrl.text = prefs.getString(AppConstants.prefFastApiHost) ?? AppConstants.defaultFastApiHost;
 
       // DeepSeek
-      _deepSeekKeyCtrl.text = prefs.getString(AppConstants.prefDeepSeekApiKey) ?? '';
+      _deepSeekKeyCtrl.text = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefDeepSeekApiKey);
       _deepSeekHostCtrl.text = prefs.getString(AppConstants.prefDeepSeekHost) ?? AppConstants.defaultDeepSeekHost;
       _deepSeekModel = prefs.getString(AppConstants.prefDeepSeekModel) ?? AppConstants.defaultDeepSeekModel;
 
       // OpenAI
-      _openAiKeyCtrl.text = prefs.getString(AppConstants.prefOpenAiApiKey) ?? '';
+      _openAiKeyCtrl.text = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefOpenAiApiKey);
       _openAiHostCtrl.text = prefs.getString(AppConstants.prefOpenAiHost) ?? AppConstants.defaultOpenAiHost;
       _openAiModel = prefs.getString(AppConstants.prefOpenAiModel) ?? AppConstants.defaultOpenAiModel;
       _openAiEmbeddingModel = prefs.getString(AppConstants.prefOpenAiEmbeddingModel) ?? AppConstants.defaultOpenAiEmbeddingModel;
 
       // Claude
-      _claudeKeyCtrl.text = prefs.getString(AppConstants.prefClaudeApiKey) ?? '';
+      _claudeKeyCtrl.text = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefClaudeApiKey);
       _claudeHostCtrl.text = prefs.getString(AppConstants.prefClaudeHost) ?? AppConstants.defaultClaudeHost;
       _claudeModel = prefs.getString(AppConstants.prefClaudeModel) ?? AppConstants.defaultClaudeModel;
 
       // Google
-      _googleKeyCtrl.text = prefs.getString(AppConstants.prefGoogleApiKey) ?? '';
+      _googleKeyCtrl.text = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefGoogleApiKey);
       _googleHostCtrl.text = prefs.getString(AppConstants.prefGoogleHost) ?? AppConstants.defaultGoogleHost;
       _googleModel = prefs.getString(AppConstants.prefGoogleModel) ?? AppConstants.defaultGoogleModel;
       _googleEmbeddingModel = prefs.getString(AppConstants.prefGoogleEmbeddingModel) ?? AppConstants.defaultGoogleEmbeddingModel;
@@ -204,23 +206,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setBool(AppConstants.prefFastApiEnabled, _selectedProvider == AiProvider.fastapi);
 
     // DeepSeek
-    await prefs.setString(AppConstants.prefDeepSeekApiKey, _deepSeekKeyCtrl.text.trim());
+    await SecurityUtil.saveEncryptedKey(prefs, AppConstants.prefDeepSeekApiKey, _deepSeekKeyCtrl.text.trim());
     await prefs.setString(AppConstants.prefDeepSeekHost, _deepSeekHostCtrl.text.trim());
     await prefs.setString(AppConstants.prefDeepSeekModel, _deepSeekModel);
 
     // OpenAI
-    await prefs.setString(AppConstants.prefOpenAiApiKey, _openAiKeyCtrl.text.trim());
+    await SecurityUtil.saveEncryptedKey(prefs, AppConstants.prefOpenAiApiKey, _openAiKeyCtrl.text.trim());
     await prefs.setString(AppConstants.prefOpenAiHost, _openAiHostCtrl.text.trim());
     await prefs.setString(AppConstants.prefOpenAiModel, _openAiModel);
     await prefs.setString(AppConstants.prefOpenAiEmbeddingModel, _openAiEmbeddingModel);
 
     // Claude
-    await prefs.setString(AppConstants.prefClaudeApiKey, _claudeKeyCtrl.text.trim());
+    await SecurityUtil.saveEncryptedKey(prefs, AppConstants.prefClaudeApiKey, _claudeKeyCtrl.text.trim());
     await prefs.setString(AppConstants.prefClaudeHost, _claudeHostCtrl.text.trim());
     await prefs.setString(AppConstants.prefClaudeModel, _claudeModel);
 
     // Google
-    await prefs.setString(AppConstants.prefGoogleApiKey, _googleKeyCtrl.text.trim());
+    await SecurityUtil.saveEncryptedKey(prefs, AppConstants.prefGoogleApiKey, _googleKeyCtrl.text.trim());
     await prefs.setString(AppConstants.prefGoogleHost, _googleHostCtrl.text.trim());
     await prefs.setString(AppConstants.prefGoogleModel, _googleModel);
     await prefs.setString(AppConstants.prefGoogleEmbeddingModel, _googleEmbeddingModel);
@@ -584,6 +586,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('已成功清除所有資料庫內容')),
+        );
+      }
+    }
+  }
+
+  Future<void> _clearAllApiKeysAndHistory() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.shield_outlined, color: Colors.deepOrange),
+            SizedBox(width: 8),
+            Text('安全清除確認'),
+          ],
+        ),
+        content: const Text(
+          '確定要清除本機加密儲存的所有雲端 API KEY（OpenAI、Claude、Gemini、DeepSeek）以及 AI 分析歷史記錄嗎？此動作無法復原。',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.deepOrange),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('確認清除'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final prefs = await SharedPreferences.getInstance();
+      await SecurityUtil.clearAllApiKeys(prefs);
+      await prefs.remove(AiAnalysisService.prefHistoryKey);
+
+      setState(() {
+        _deepSeekKeyCtrl.clear();
+        _openAiKeyCtrl.clear();
+        _claudeKeyCtrl.clear();
+        _googleKeyCtrl.clear();
+        widget.ollamaClient.apiKey = '';
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已清除所有 API KEY 與 AI 分析歷史記錄')),
         );
       }
     }
@@ -1087,6 +1135,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: const Icon(Icons.delete_forever, size: 18),
                 label: const Text('清空資料庫'),
                 onPressed: _clearAllData,
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.deepOrange),
+                icon: const Icon(Icons.shield_outlined, size: 18),
+                label: const Text('一鍵清除所有 API KEY 與分析記錄'),
+                onPressed: _clearAllApiKeysAndHistory,
               ),
             ),
           ],

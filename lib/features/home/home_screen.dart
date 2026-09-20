@@ -230,49 +230,85 @@ class _HomeScreenState extends State<HomeScreen> {
 
         const SizedBox(height: 20),
 
-        // Quick Import Banner
-        Card(
-          color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
+        // Quick Action Banners (AI Analysis & Document Import)
+        Row(
+          children: [
+            Expanded(
+              child: Card(
+                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => widget.onNavigateTab(2), // AI Analysis Tab
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.psychology, color: Theme.of(context).colorScheme.primary, size: 24),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                'AI 文字分析',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '貼上純文字/載入檔案，多維度標籤辨識與關聯文獻檢索',
+                          style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
                   ),
-                  child: Icon(Icons.upload_file, color: Theme.of(context).colorScheme.primary, size: 28),
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '匯入新文獻',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '支援 PDF、圖片（JPG/PNG/WebP）端側 OCR 與 AI 標籤',
-                        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                      ),
-                    ],
-                  ),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryColor,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () => widget.onNavigateTab(2), // Jump to Import Tab
-                  child: const Text('匯入'),
-                ),
-              ],
+              ),
             ),
-          ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Card(
+                color: Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.4),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => widget.onNavigateTab(3), // Import Tab
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.upload_file, color: Theme.of(context).colorScheme.secondary, size: 24),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                '匯入新文獻',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '支援 PDF/圖片 OCR、AI 標籤與自動入庫',
+                          style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
 
         const SizedBox(height: 24),
@@ -308,7 +344,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Text('尚未匯入任何文獻', style: TextStyle(color: Colors.grey)),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
-                  onPressed: () => widget.onNavigateTab(2),
+                  onPressed: () => widget.onNavigateTab(3),
                   icon: const Icon(Icons.add),
                   label: const Text('立即匯入文獻'),
                 ),

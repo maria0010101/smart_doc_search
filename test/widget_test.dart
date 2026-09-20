@@ -35,7 +35,8 @@ void main() {
     expect(find.text('個人智能文獻檢索'), findsOneWidget);
     expect(find.text('首頁'), findsOneWidget);
     expect(find.text('檢索'), findsOneWidget);
-    expect(find.text('匯入'), findsNWidgets(2)); // Button on HomeScreen + Bottom NavigationDestination
+    expect(find.text('AI分析'), findsOneWidget);
+    expect(find.text('匯入'), findsOneWidget);
     expect(find.text('標籤'), findsOneWidget);
     expect(find.text('設定'), findsOneWidget);
 

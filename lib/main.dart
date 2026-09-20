@@ -5,11 +5,13 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
+import 'package:smart_doc_search/core/utils/security_util.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/datasources/sqlite_desktop_datasource.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
+import 'package:smart_doc_search/features/analysis/ai_analysis_screen.dart';
 import 'package:smart_doc_search/features/home/home_screen.dart';
 import 'package:smart_doc_search/features/import/import_screen.dart';
 import 'package:smart_doc_search/features/import/import_service.dart';
@@ -47,24 +49,24 @@ void main() async {
     case AiProvider.deepseek:
       host = prefs.getString(AppConstants.prefDeepSeekHost) ?? AppConstants.defaultDeepSeekHost;
       textModel = prefs.getString(AppConstants.prefDeepSeekModel) ?? AppConstants.defaultDeepSeekModel;
-      apiKey = prefs.getString(AppConstants.prefDeepSeekApiKey) ?? '';
+      apiKey = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefDeepSeekApiKey);
       break;
     case AiProvider.openai:
       host = prefs.getString(AppConstants.prefOpenAiHost) ?? AppConstants.defaultOpenAiHost;
       textModel = prefs.getString(AppConstants.prefOpenAiModel) ?? AppConstants.defaultOpenAiModel;
       embedModel = prefs.getString(AppConstants.prefOpenAiEmbeddingModel) ?? AppConstants.defaultOpenAiEmbeddingModel;
-      apiKey = prefs.getString(AppConstants.prefOpenAiApiKey) ?? '';
+      apiKey = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefOpenAiApiKey);
       break;
     case AiProvider.claude:
       host = prefs.getString(AppConstants.prefClaudeHost) ?? AppConstants.defaultClaudeHost;
       textModel = prefs.getString(AppConstants.prefClaudeModel) ?? AppConstants.defaultClaudeModel;
-      apiKey = prefs.getString(AppConstants.prefClaudeApiKey) ?? '';
+      apiKey = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefClaudeApiKey);
       break;
     case AiProvider.google:
       host = prefs.getString(AppConstants.prefGoogleHost) ?? AppConstants.defaultGoogleHost;
       textModel = prefs.getString(AppConstants.prefGoogleModel) ?? AppConstants.defaultGoogleModel;
       embedModel = prefs.getString(AppConstants.prefGoogleEmbeddingModel) ?? AppConstants.defaultGoogleEmbeddingModel;
-      apiKey = prefs.getString(AppConstants.prefGoogleApiKey) ?? '';
+      apiKey = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefGoogleApiKey);
       break;
   }
 
@@ -294,6 +296,11 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
         searchService: widget.searchService,
         initialQuery: _prefilledSearchQuery,
       ),
+      AiAnalysisScreen(
+        repository: widget.repository,
+        ollamaClient: widget.ollamaClient,
+        onNavigateToSettings: () => _onNavigateTab(5),
+      ),
       ImportScreen(
         importService: widget.importService,
         onImportSuccess: () {
@@ -335,6 +342,11 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
             icon: Icon(Icons.search_outlined),
             selectedIcon: Icon(Icons.search),
             label: '檢索',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.psychology_outlined),
+            selectedIcon: Icon(Icons.psychology),
+            label: 'AI分析',
           ),
           NavigationDestination(
             icon: Icon(Icons.cloud_upload_outlined),
