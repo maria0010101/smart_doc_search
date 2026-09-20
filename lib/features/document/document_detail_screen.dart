@@ -1358,7 +1358,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                 _buildMetaRow('匯入時間', dateFormat.format(DateTime.fromMillisecondsSinceEpoch(doc.createdAt))),
                 _buildMetaRow('最後更新', dateFormat.format(DateTime.fromMillisecondsSinceEpoch(doc.updatedAt))),
                 _buildMetaRow('SHA-256 查重碼', doc.fileHash.isNotEmpty ? doc.fileHash : '無'),
-                _buildMetaRow('手機副本路徑', (doc.metadata['documentsCopyPath'] as String?) ?? doc.filePath),
+                _buildMetaRow('文獻存放路徑', (doc.metadata['documentsCopyPath'] as String?) ?? doc.filePath),
                 const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,

@@ -188,7 +188,28 @@ class MainActivity : FlutterActivity() {
                         }
                         "openFile" -> {
                             val filePath = call.argument<String>("filePath") ?: ""
-                            val file = java.io.File(filePath)
+                            var file = java.io.File(filePath)
+                            if (!file.exists()) {
+                                // Fallback: Check Smart_Doc, legacy SmartDocSearch, external and internal paths
+                                val fileName = java.io.File(filePath).name
+                                val publicDocs = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
+                                val candidate1 = java.io.File(publicDocs, "Smart_Doc/$fileName")
+                                val candidate2 = java.io.File(publicDocs, "SmartDocSearch/$fileName")
+                                val candidate3 = applicationContext.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)?.let { java.io.File(it, "Smart_Doc/$fileName") }
+                                val candidate4 = applicationContext.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)?.let { java.io.File(it, "SmartDocSearch/$fileName") }
+                                val candidate5 = java.io.File(applicationContext.filesDir, "Documents/Smart_Doc/$fileName")
+                                val candidate6 = java.io.File(applicationContext.filesDir, "Documents/$fileName")
+
+                                file = when {
+                                    candidate1.exists() -> candidate1
+                                    candidate2.exists() -> candidate2
+                                    candidate3 != null && candidate3.exists() -> candidate3
+                                    candidate4 != null && candidate4.exists() -> candidate4
+                                    candidate5.exists() -> candidate5
+                                    candidate6.exists() -> candidate6
+                                    else -> file
+                                }
+                            }
                             if (!file.exists()) {
                                 runOnUiThread { result.error("FILE_NOT_FOUND", "檔案不存在: $filePath", null) }
                                 return@execute
@@ -200,17 +221,17 @@ class MainActivity : FlutterActivity() {
                                     file
                                 )
                                 val mimeType = when {
-                                    filePath.endsWith(".pdf", ignoreCase = true) -> "application/pdf"
-                                    filePath.endsWith(".png", ignoreCase = true) -> "image/png"
-                                    filePath.endsWith(".jpg", ignoreCase = true) || filePath.endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
-                                    filePath.endsWith(".webp", ignoreCase = true) -> "image/webp"
-                                    filePath.endsWith(".txt", ignoreCase = true) || filePath.endsWith(".log", ignoreCase = true) -> "text/plain"
-                                    filePath.endsWith(".md", ignoreCase = true) || filePath.endsWith(".markdown", ignoreCase = true) -> "text/markdown"
-                                    filePath.endsWith(".csv", ignoreCase = true) -> "text/csv"
-                                    filePath.endsWith(".json", ignoreCase = true) -> "application/json"
-                                    filePath.endsWith(".gz", ignoreCase = true) -> "application/gzip"
-                                    filePath.endsWith(".zip", ignoreCase = true) -> "application/zip"
-                                    filePath.endsWith(".ppt", ignoreCase = true) || filePath.endsWith(".pptx", ignoreCase = true) -> "application/vnd.ms-powerpoint"
+                                    file.name.endsWith(".pdf", ignoreCase = true) -> "application/pdf"
+                                    file.name.endsWith(".png", ignoreCase = true) -> "image/png"
+                                    file.name.endsWith(".jpg", ignoreCase = true) || file.name.endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
+                                    file.name.endsWith(".webp", ignoreCase = true) -> "image/webp"
+                                    file.name.endsWith(".txt", ignoreCase = true) || file.name.endsWith(".log", ignoreCase = true) -> "text/plain"
+                                    file.name.endsWith(".md", ignoreCase = true) || file.name.endsWith(".markdown", ignoreCase = true) -> "text/markdown"
+                                    file.name.endsWith(".csv", ignoreCase = true) -> "text/csv"
+                                    file.name.endsWith(".json", ignoreCase = true) -> "application/json"
+                                    file.name.endsWith(".gz", ignoreCase = true) -> "application/gzip"
+                                    file.name.endsWith(".zip", ignoreCase = true) -> "application/zip"
+                                    file.name.endsWith(".ppt", ignoreCase = true) || file.name.endsWith(".pptx", ignoreCase = true) -> "application/vnd.ms-powerpoint"
                                     else -> "*/*"
                                 }
                                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
@@ -241,16 +262,16 @@ class MainActivity : FlutterActivity() {
 
     /**
      * Copies imported literature file to device Documents directory.
-     * Tries public /storage/emulated/0/Documents/SmartDocSearch first,
+     * Tries public /storage/emulated/0/Documents/Smart_Doc first,
      * then app-specific external Documents, and finally internal Documents.
      */
     private fun copyFileToDeviceDocuments(sourceFile: java.io.File, preferredName: String): String {
         val name = if (preferredName.isNotEmpty()) preferredName else sourceFile.name
 
-        // Strategy 1: Public Documents Directory (/storage/emulated/0/Documents/SmartDocSearch)
+        // Strategy 1: Public Documents Directory (/storage/emulated/0/Documents/Smart_Doc)
         try {
             val publicDocs = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
-            val appFolder = java.io.File(publicDocs, "SmartDocSearch")
+            val appFolder = java.io.File(publicDocs, "Smart_Doc")
             if (!appFolder.exists()) {
                 appFolder.mkdirs()
             }
@@ -267,7 +288,7 @@ class MainActivity : FlutterActivity() {
         try {
             val extDocsDir = applicationContext.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)
             if (extDocsDir != null) {
-                val appFolder = java.io.File(extDocsDir, "SmartDocSearch")
+                val appFolder = java.io.File(extDocsDir, "Smart_Doc")
                 if (!appFolder.exists()) appFolder.mkdirs()
                 val targetFile = java.io.File(appFolder, name)
                 sourceFile.copyTo(targetFile, overwrite = true)
@@ -278,7 +299,7 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {}
 
         // Strategy 3: Internal app files Documents directory
-        val internalDocs = java.io.File(applicationContext.filesDir, "Documents")
+        val internalDocs = java.io.File(applicationContext.filesDir, "Documents/Smart_Doc")
         if (!internalDocs.exists()) internalDocs.mkdirs()
         val targetFile = java.io.File(internalDocs, name)
         sourceFile.copyTo(targetFile, overwrite = true)

@@ -168,13 +168,13 @@ class ImportService {
     final destFilePath = p.join(docStorageDir.path, fileName);
     await file.copy(destFilePath);
 
-    // Save copy to the phone's internal Documents folder (開啟原始檔案時以此副本開啟)
-    _emitProgress(fileName, ImportStage.savingToDb, 0.15, '儲存副本至手機內部 Documents 資料夾...');
+    // Save copy to Documents/Smart_Doc folder (開啟原始檔案時以此副本開啟)
+    _emitProgress(fileName, ImportStage.savingToDb, 0.15, '儲存副本至 Documents/Smart_Doc 資料夾...');
     String? documentsCopyPath;
     try {
       documentsCopyPath = await repository.copyToDocuments(destFilePath, fileName);
     } catch (e) {
-      debugPrint('Failed to copy to phone Documents directory: $e');
+      debugPrint('Failed to copy to Documents/Smart_Doc directory: $e');
     }
     final effectiveFilePath = (documentsCopyPath != null && documentsCopyPath.isNotEmpty)
         ? documentsCopyPath

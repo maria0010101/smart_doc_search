@@ -576,7 +576,7 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
     // Fallback: Copy to application documents folder
     try {
       final appDir = await getApplicationDocumentsDirectory();
-      final docsDir = Directory('${appDir.path}/Documents/SmartDocSearch');
+      final docsDir = Directory('${appDir.path}/Documents/Smart_Doc');
       if (!await docsDir.exists()) await docsDir.create(recursive: true);
       final dest = File('${docsDir.path}/$fileName');
       await File(sourcePath).copy(dest.path);

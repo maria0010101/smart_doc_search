@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
@@ -402,6 +403,48 @@ void main() {
       expect(stats['documentCount'], 5);
       expect(stats['pageCount'], 176);
       expect(stats['tagCount'], 982); // 982 unique tags case-insensitively deduplicated from 1159
+    });
+  });
+
+  group('5. Cross-Platform Literature Folder Path & Fallback Tests', () {
+    test('SqliteDesktopDataSource copies literature to Smart_Doc directory', () async {
+      final tempDocDir = await Directory.systemTemp.createTemp('smart_doc_docs_');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('plugins.flutter.io/path_provider'),
+        (MethodCall methodCall) async {
+          if (methodCall.method == 'getApplicationDocumentsDirectory') {
+            return tempDocDir.path;
+          }
+          return null;
+        },
+      );
+
+      final desktopSource = SqliteDesktopDataSource(customDbPath: inMemoryDatabasePath);
+      final tempSourceDir = await Directory.systemTemp.createTemp('smart_doc_src_');
+      final testFile = File('${tempSourceDir.path}/test_literature.pdf');
+      await testFile.writeAsString('Dummy PDF content for Smart_Doc test');
+
+      final copiedPath = await desktopSource.copyToDocuments(testFile.path, 'test_literature.pdf');
+      expect(copiedPath, isNotNull);
+      expect(copiedPath, contains('Smart_Doc'));
+      expect(copiedPath, endsWith('test_literature.pdf'));
+
+      final copiedFile = File(copiedPath!);
+      expect(await copiedFile.exists(), isTrue);
+      expect(await copiedFile.readAsString(), 'Dummy PDF content for Smart_Doc test');
+
+      // Cleanup
+      await testFile.delete();
+      await tempSourceDir.delete(recursive: true);
+      await tempDocDir.delete(recursive: true);
+      await desktopSource.close();
+    });
+
+    test('SqliteDesktopDataSource openFile returns false when file does not exist anywhere', () async {
+      final desktopSource = SqliteDesktopDataSource(customDbPath: inMemoryDatabasePath);
+      final res = await desktopSource.openFile('/non/existent/path/never_existed.pdf');
+      expect(res, isFalse);
+      await desktopSource.close();
     });
   });
 }

@@ -586,14 +586,14 @@ class KoreDBNativeStore(private val context: Context) {
             tagMetadata.clear()
             vectorEmbeddings.clear()
 
-            if (root.has("documents")) {
+            if (root.has("documents") && !root.isNull("documents")) {
                 val arr = root.getJSONArray("documents")
                 for (i in 0 until arr.length()) {
                     val doc = arr.getJSONObject(i)
                     val id = doc.getString("id")
                     documents[id] = doc
 
-                    if (doc.has("embedding")) {
+                    if (doc.has("embedding") && !doc.isNull("embedding")) {
                         val embArr = doc.getJSONArray("embedding")
                         val floats = FloatArray(embArr.length()) { idx -> embArr.getDouble(idx).toFloat() }
                         if (floats.isNotEmpty()) {
@@ -601,7 +601,7 @@ class KoreDBNativeStore(private val context: Context) {
                         }
                     }
 
-                    if (doc.has("tags")) {
+                    if (doc.has("tags") && !doc.isNull("tags")) {
                         val tags = doc.getJSONArray("tags")
                         for (t in 0 until tags.length()) {
                             val tagName = tags.getJSONObject(t).optString("name", "").trim().lowercase()
@@ -613,7 +613,7 @@ class KoreDBNativeStore(private val context: Context) {
                 }
             }
 
-            if (root.has("pages")) {
+            if (root.has("pages") && !root.isNull("pages")) {
                 val arr = root.getJSONArray("pages")
                 for (i in 0 until arr.length()) {
                     val p = arr.getJSONObject(i)
@@ -622,7 +622,7 @@ class KoreDBNativeStore(private val context: Context) {
                 }
             }
 
-            if (root.has("tags")) {
+            if (root.has("tags") && !root.isNull("tags")) {
                 val arr = root.getJSONArray("tags")
                 val restoredNames = mutableSetOf<String>()
                 for (i in 0 until arr.length()) {

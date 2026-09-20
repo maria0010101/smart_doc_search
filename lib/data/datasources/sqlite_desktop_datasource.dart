@@ -765,14 +765,31 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
   @override
   Future<bool> openFile(String filePath) async {
     try {
+      File file = File(filePath);
+      if (!await file.exists()) {
+        // Fallback: Check in system Documents/Smart_Doc/ or legacy folders
+        final appDir = await getApplicationDocumentsDirectory();
+        final fileName = p.basename(filePath);
+        final candidate1 = File(p.join(appDir.path, 'Smart_Doc', fileName));
+        if (await candidate1.exists()) {
+          file = candidate1;
+        } else {
+          final candidate2 = File(p.join(appDir.path, 'SmartDocSearch', 'Documents', fileName));
+          if (await candidate2.exists()) {
+            file = candidate2;
+          }
+        }
+      }
+      if (!await file.exists()) return false;
+
       if (Platform.isWindows) {
-        await Process.run('cmd', ['/c', 'start', '', filePath]);
+        await Process.run('cmd', ['/c', 'start', '', file.path]);
         return true;
       } else if (Platform.isLinux) {
-        await Process.run('xdg-open', [filePath]);
+        await Process.run('xdg-open', [file.path]);
         return true;
       } else if (Platform.isMacOS) {
-        await Process.run('open', [filePath]);
+        await Process.run('open', [file.path]);
         return true;
       }
     } catch (e) {
@@ -785,7 +802,7 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
   Future<String?> copyToDocuments(String sourcePath, String fileName) async {
     try {
       final appDir = await getApplicationDocumentsDirectory();
-      final targetFolder = Directory(p.join(appDir.path, 'SmartDocSearch', 'Documents'));
+      final targetFolder = Directory(p.join(appDir.path, 'Smart_Doc'));
       if (!await targetFolder.exists()) {
         await targetFolder.create(recursive: true);
       }
