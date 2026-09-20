@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,6 +7,7 @@ import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
+import 'package:smart_doc_search/data/datasources/sqlite_desktop_datasource.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
 import 'package:smart_doc_search/features/home/home_screen.dart';
@@ -66,7 +68,18 @@ void main() async {
       break;
   }
 
-  final dataSource = KoreDbNativeDataSource();
+  final diseaseClassificationMode = prefs.getBool(AppConstants.prefDiseaseClassificationMode) ?? true;
+
+  // On desktop (Windows 11 / Linux), use SqliteDesktopDataSource for ACID persistence;
+  // on Android, use KoreDbNativeDataSource for Kotlin KoreDB integration.
+  // Both share identical JSON schema for seamless cross-platform backup and restore interoperability.
+  final KoreDbDataSource dataSource;
+  if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
+    dataSource = SqliteDesktopDataSource();
+  } else {
+    dataSource = KoreDbNativeDataSource();
+  }
+
   final repository = DocumentRepository(dataSource: dataSource);
   final ollamaClient = OllamaClient(
     provider: provider,
@@ -75,6 +88,7 @@ void main() async {
     embeddingModel: embedModel,
     apiKey: apiKey,
     isFastApi: isFastApi,
+    diseaseClassificationMode: diseaseClassificationMode,
   );
   final importService = ImportService(
     repository: repository,

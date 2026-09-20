@@ -152,4 +152,5 @@ class AppConstants {
 
   static const String prefDarkMode = 'pref_dark_mode';
   static const String prefEnableVector = 'pref_enable_vector';
+  static const String prefDiseaseClassificationMode = 'pref_disease_classification_mode';
 }

@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
@@ -24,6 +26,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   AiProvider _selectedProvider = AiProvider.ollama;
+  bool _diseaseClassificationMode = true;
 
   // Controllers per Provider
   final TextEditingController _ollamaHostCtrl = TextEditingController();
@@ -148,6 +151,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _googleModel = prefs.getString(AppConstants.prefGoogleModel) ?? AppConstants.defaultGoogleModel;
       _googleEmbeddingModel = prefs.getString(AppConstants.prefGoogleEmbeddingModel) ?? AppConstants.defaultGoogleEmbeddingModel;
 
+      _diseaseClassificationMode = prefs.getBool(AppConstants.prefDiseaseClassificationMode) ?? true;
+      widget.ollamaClient.diseaseClassificationMode = _diseaseClassificationMode;
+
       _updateAvailableModelsList();
     });
   }
@@ -210,6 +216,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setString(AppConstants.prefGoogleHost, _googleHostCtrl.text.trim());
     await prefs.setString(AppConstants.prefGoogleModel, _googleModel);
     await prefs.setString(AppConstants.prefGoogleEmbeddingModel, _googleEmbeddingModel);
+
+    await prefs.setBool(AppConstants.prefDiseaseClassificationMode, _diseaseClassificationMode);
+    widget.ollamaClient.diseaseClassificationMode = _diseaseClassificationMode;
 
     // Update active client properties
     widget.ollamaClient.provider = _selectedProvider;
@@ -352,33 +361,194 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _exportBackup() async {
-    final backup = await widget.repository.exportBackup();
-    if (mounted) {
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('資料庫備份導出'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('備份資料已成功產生（JSON 格式）：'),
-              const SizedBox(height: 10),
-              Container(
-                height: 150,
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(6)),
-                child: SingleChildScrollView(
-                  child: Text(backup, style: const TextStyle(fontSize: 10, fontFamily: 'monospace')),
+    try {
+      final gzPath = await widget.repository.exportBackupToFile(compress: true);
+      final jsonPath = await widget.repository.exportBackupToFile(compress: false);
+      final gzFile = File(gzPath);
+      final gzSize = await gzFile.exists() ? (await gzFile.length()) : 0;
+      final jsonFile = File(jsonPath);
+      final jsonSize = await jsonFile.exists() ? (await jsonFile.length()) : 0;
+
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.teal),
+                SizedBox(width: 8),
+                Text('資料庫備份導出成功'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('已成功將全部 Document、Page、Tag 資料庫內容匯出備份：'),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '1. 壓縮備份檔 (.json.gz, ${(gzSize / 1024).toStringAsFixed(1)} KB)：\n$gzPath',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '2. 標準 JSON 檔 (.json, ${(jsonSize / 1024).toStringAsFixed(1)} KB)：\n$jsonPath',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+                const SizedBox(height: 10),
+                const Text(
+                  '此備份檔案完全符合標準交換 Schema，可於 Android APK (KoreDB) 與 Windows 11 (SQLite) 桌面版之間雙向匯入互通！',
+                  style: TextStyle(fontSize: 12, color: Colors.blueGrey),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('完成')),
             ],
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('關閉')),
-          ],
-        ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('備份匯出失敗: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _importBackup() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json', 'gz'],
+        withData: true,
       );
+
+      if (result == null || result.files.isEmpty) return;
+
+      final file = result.files.first;
+      List<int>? bytes = file.bytes;
+      if (bytes == null && file.path != null) {
+        bytes = await File(file.path!).readAsBytes();
+      }
+
+      if (bytes == null || bytes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('無法讀取選取的備份檔案內容')),
+          );
+        }
+        return;
+      }
+
+      // Show loading indicator
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const Center(
+            child: Card(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(width: 16),
+                    Text('驗證 Schema 版本與執行事務匯入中...'),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+
+      final restoreRes = await widget.repository.restoreBackupWithValidation(bytes);
+
+      if (mounted) {
+        Navigator.pop(context); // Close loading dialog
+      }
+
+      if (restoreRes.success) {
+        await _loadStats();
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.green),
+                  SizedBox(width: 8),
+                  Text('資料庫匯入成功'),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(restoreRes.message),
+                  if (restoreRes.migratedVersion != null) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '已自動完成舊版本 (v${restoreRes.migratedVersion}) 至最新 Schema (v2.0) 資料結構遷移，包含 code_system 等欄位補齊。',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('確定')),
+              ],
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.error_outline, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text('匯入失敗與事務回滾'),
+                ],
+              ),
+              content: Text(restoreRes.message),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('確定')),
+              ],
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('匯入操作失敗: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 
@@ -876,22 +1046,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.download),
-                    label: const Text('匯出備份 (JSON)'),
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.teal,
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.download, size: 18),
+                    label: const Text('匯出備份 (壓縮/JSON)'),
                     onPressed: _exportBackup,
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                    icon: const Icon(Icons.delete_forever),
-                    label: const Text('清空資料庫'),
-                    onPressed: _clearAllData,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.indigo,
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.upload_file, size: 18),
+                    label: const Text('匯入備份 (還原/遷移)'),
+                    onPressed: _importBackup,
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                icon: const Icon(Icons.delete_forever, size: 18),
+                label: const Text('清空資料庫'),
+                onPressed: _clearAllData,
+              ),
             ),
           ],
         ),
@@ -907,10 +1094,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('介面與隱私偏好', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const Text('介面與專業模式偏好', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             const SizedBox(height: 8),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
+              secondary: const Icon(Icons.medical_services_outlined, color: Colors.teal),
+              title: const Text('疾病分類專業辨識模式'),
+              subtitle: const Text('開啟時強化疾病分類編碼 (ICD/SNOMED)、症狀、器官部位、編碼規則與併發症；關閉時為一般學術文獻模式。'),
+              value: _diseaseClassificationMode,
+              onChanged: (val) async {
+                setState(() => _diseaseClassificationMode = val);
+                widget.ollamaClient.diseaseClassificationMode = val;
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool(AppConstants.prefDiseaseClassificationMode, val);
+              },
+            ),
+            const Divider(),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              secondary: const Icon(Icons.dark_mode_outlined),
               title: const Text('深色模式 (Dark Theme)'),
               value: widget.isDarkMode,
               onChanged: (val) {
@@ -921,7 +1123,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.security, color: Colors.green),
               title: Text('本機隱私保護'),
-              subtitle: Text('文獻內容與反向標籤索引均存於本地 KoreDB 嵌入式引擎，確保資產安全。'),
+              subtitle: Text('文獻內容與反向標籤索引均存於本地引擎 (Android KoreDB / Windows SQLite)，確保資產安全與跨端相容。'),
             ),
           ],
         ),

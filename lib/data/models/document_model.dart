@@ -113,8 +113,9 @@ class TagItem {
   final String name;
   final String category;
   final double confidence;
-  final String source; // 'ai_text' | 'ai_image' | 'user' | 'rule'
+  final String source; // 'user' | 'ai_text' | 'ai_image' | 'fusion'
   final bool verified;
+  final String? codeSystem; // e.g. 'ICD-10-CM', 'ICD-10-PCS', 'SNOMED-CT'
 
   TagItem({
     required this.id,
@@ -123,6 +124,7 @@ class TagItem {
     this.confidence = 1.0,
     this.source = 'ai_text',
     this.verified = false,
+    this.codeSystem,
   });
 
   TagItem copyWith({
@@ -132,6 +134,7 @@ class TagItem {
     double? confidence,
     String? source,
     bool? verified,
+    String? codeSystem,
   }) {
     return TagItem(
       id: id ?? this.id,
@@ -140,6 +143,7 @@ class TagItem {
       confidence: confidence ?? this.confidence,
       source: source ?? this.source,
       verified: verified ?? this.verified,
+      codeSystem: codeSystem ?? this.codeSystem,
     );
   }
 
@@ -151,8 +155,11 @@ class TagItem {
       'confidence': confidence,
       'source': source,
       'verified': verified,
+      'code_system': codeSystem,
     };
   }
+
+  String toJson() => json.encode(toMap());
 
   factory TagItem.fromMap(Map<String, dynamic> map) {
     return TagItem(
@@ -162,7 +169,15 @@ class TagItem {
       confidence: (map['confidence'] is num) ? (map['confidence'] as num).toDouble() : 1.0,
       source: map['source'] ?? 'ai_text',
       verified: map['verified'] == true,
+      codeSystem: map['code_system'] ?? map['codeSystem'],
     );
+  }
+
+  factory TagItem.fromJson(dynamic source) {
+    if (source is Map<String, dynamic>) {
+      return TagItem.fromMap(source);
+    }
+    return TagItem.fromMap(json.decode(source.toString()));
   }
 }
 
@@ -258,6 +273,7 @@ class TagDefinition {
   final int usageCount;
   final int createdAt;
   final int updatedAt;
+  final String? codeSystem;
 
   TagDefinition({
     required this.id,
@@ -267,6 +283,7 @@ class TagDefinition {
     this.usageCount = 0,
     required this.createdAt,
     required this.updatedAt,
+    this.codeSystem,
   });
 
   TagDefinition copyWith({
@@ -277,6 +294,7 @@ class TagDefinition {
     int? usageCount,
     int? createdAt,
     int? updatedAt,
+    String? codeSystem,
   }) {
     return TagDefinition(
       id: id ?? this.id,
@@ -286,6 +304,7 @@ class TagDefinition {
       usageCount: usageCount ?? this.usageCount,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      codeSystem: codeSystem ?? this.codeSystem,
     );
   }
 
@@ -298,6 +317,7 @@ class TagDefinition {
       'usageCount': usageCount,
       'createdAt': createdAt,
       'updatedAt': updatedAt,
+      'code_system': codeSystem,
     };
   }
 
@@ -312,6 +332,7 @@ class TagDefinition {
       usageCount: (map['usageCount'] is num) ? (map['usageCount'] as num).toInt() : 0,
       createdAt: (map['createdAt'] is num) ? (map['createdAt'] as num).toInt() : 0,
       updatedAt: (map['updatedAt'] is num) ? (map['updatedAt'] as num).toInt() : 0,
+      codeSystem: map['code_system'] ?? map['codeSystem'],
     );
   }
 

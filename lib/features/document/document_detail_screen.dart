@@ -12,12 +12,18 @@ class DocumentDetailScreen extends StatefulWidget {
   final String documentId;
   final DocumentRepository repository;
   final OllamaClient ollamaClient;
+  final bool isEmbedded;
+  final VoidCallback? onDocumentDeleted;
+  final VoidCallback? onDocumentUpdated;
 
   const DocumentDetailScreen({
     super.key,
     required this.documentId,
     required this.repository,
     required this.ollamaClient,
+    this.isEmbedded = false,
+    this.onDocumentDeleted,
+    this.onDocumentUpdated,
   });
 
   @override
@@ -77,6 +83,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     );
     await widget.repository.updateDocument(updated);
     setState(() => _document = updated);
+    widget.onDocumentUpdated?.call();
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -221,6 +228,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     );
     await widget.repository.updateDocument(updated);
     setState(() => _document = updated);
+    widget.onDocumentUpdated?.call();
   }
 
   Future<void> _deleteTag(TagItem tag) async {
@@ -232,6 +240,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     );
     await widget.repository.updateDocument(updated);
     setState(() => _document = updated);
+    widget.onDocumentUpdated?.call();
   }
 
   Future<void> _showAddTagDialog() async {
@@ -313,6 +322,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
       );
       await widget.repository.updateDocument(updated);
       setState(() => _document = updated);
+      widget.onDocumentUpdated?.call();
     }
   }
 
@@ -368,6 +378,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
 
         await widget.repository.updateDocument(updated);
         setState(() => _document = updated);
+        widget.onDocumentUpdated?.call();
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -414,7 +425,11 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     if (confirm == true) {
       await widget.repository.deleteDocument(widget.documentId);
       if (mounted) {
-        Navigator.pop(context);
+        if (widget.isEmbedded) {
+          widget.onDocumentDeleted?.call();
+        } else {
+          Navigator.pop(context);
+        }
       }
     }
   }
@@ -434,7 +449,10 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     }
     if (_document == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('文獻詳情')),
+        appBar: AppBar(
+          automaticallyImplyLeading: !widget.isEmbedded,
+          title: const Text('文獻詳情'),
+        ),
         body: const Center(child: Text('找不到該文獻')),
       );
     }
@@ -444,7 +462,13 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('文獻詳情', style: TextStyle(fontWeight: FontWeight.bold)),
+        automaticallyImplyLeading: !widget.isEmbedded,
+        title: Text(
+          widget.isEmbedded ? (doc.title.isNotEmpty ? doc.title : '文獻詳情') : '文獻詳情',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.open_in_new),
@@ -489,6 +513,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
 
   /// Tab 1: AI Summary at very top, followed by Medical/Structured Tags and Full Recognized Content
   Widget _buildSummaryAndRecognizedContentTab(Document doc) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final chineseSummary = (doc.metadata['chineseSummary'] ?? '').toString().trim();
     final isEnglishDoc = doc.language.toLowerCase().startsWith('en') ||
         (chineseSummary.isNotEmpty && chineseSummary != doc.summary);
@@ -514,7 +539,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
       padding: const EdgeInsets.all(16),
       children: [
         // 1. Prominent AI Executive Summary Card (置於最上方確認是否為查詢目標)
-        _buildAiSummaryCard(doc, chineseSummary, isEnglishDoc),
+        _buildAiSummaryCard(doc, chineseSummary, isEnglishDoc, isDark),
 
         const SizedBox(height: 14),
 
@@ -555,27 +580,35 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
         const SizedBox(height: 14),
 
         // 4. Recognized Text Content (辨識後文字內容呈現)
-        _buildRecognizedTextSection(allOcrText),
+        _buildRecognizedTextSection(allOcrText, isDark),
       ],
     );
   }
 
   /// Prominent AI Summary Box at top
-  Widget _buildAiSummaryCard(Document doc, String chineseSummary, bool isEnglishDoc) {
+  Widget _buildAiSummaryCard(Document doc, String chineseSummary, bool isEnglishDoc, bool isDark) {
     return Card(
       elevation: 3,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: Colors.blue.withValues(alpha: 0.3), width: 1.5),
+        side: BorderSide(
+          color: isDark ? Colors.blue.withValues(alpha: 0.35) : Colors.blue.withValues(alpha: 0.3),
+          width: 1.5,
+        ),
       ),
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
           gradient: LinearGradient(
-            colors: [
-              Colors.blue.withValues(alpha: 0.07),
-              Colors.purple.withValues(alpha: 0.04),
-            ],
+            colors: isDark
+                ? [
+                    const Color(0xFF0F1523),
+                    const Color(0xFF14192B),
+                  ]
+                : [
+                    Colors.blue.withValues(alpha: 0.07),
+                    Colors.purple.withValues(alpha: 0.04),
+                  ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -597,12 +630,17 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: Colors.indigo.withValues(alpha: 0.15),
+                    color: isDark ? Colors.indigo.shade900.withValues(alpha: 0.5) : Colors.indigo.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(6),
+                    border: isDark ? Border.all(color: Colors.indigo.shade400.withValues(alpha: 0.3)) : null,
                   ),
                   child: Text(
                     widget.ollamaClient.providerDisplayName,
-                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.indigo),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: isDark ? Colors.indigo.shade200 : Colors.indigo,
+                    ),
                   ),
                 ),
               ],
@@ -614,17 +652,25 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.teal.withValues(alpha: 0.1),
+                color: isDark ? const Color(0xFF0A2220) : Colors.teal.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isDark ? Colors.teal.shade700.withValues(alpha: 0.5) : Colors.teal.shade200,
+                  width: 0.8,
+                ),
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  Icon(Icons.track_changes, color: Colors.teal, size: 16),
-                  SizedBox(width: 6),
+                  Icon(Icons.track_changes, color: isDark ? Colors.teal.shade300 : Colors.teal, size: 16),
+                  const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       '目標檢索確認：請閱讀下方摘要，快速判斷是否為您查詢之目標文獻。',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.teal),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: isDark ? Colors.teal.shade200 : Colors.teal.shade900,
+                      ),
                     ),
                   ),
                 ],
@@ -638,32 +684,34 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.amber.withValues(alpha: 0.12),
+                  color: isDark
+                      ? const Color(0xFF141006) // 加深底色：深琥珀黑底色，形成極佳明暗對比
+                      : Colors.amber.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.amber.shade700.withValues(alpha: 0.4)),
+                  border: Border.all(
+                    color: isDark ? Colors.amber.shade700.withValues(alpha: 0.55) : Colors.amber.shade700.withValues(alpha: 0.4),
+                    width: 1.0,
+                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.translate, size: 16, color: Colors.amber.shade800),
+                        Icon(Icons.translate, size: 16, color: isDark ? Colors.amber.shade300 : Colors.amber.shade800),
                         const SizedBox(width: 6),
                         Text(
                           '英文文獻中文摘要說明',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.bold,
-                            color: Colors.amber.shade900,
+                            color: isDark ? Colors.amber.shade200 : Colors.amber.shade900,
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 8),
-                    SelectableText(
-                      chineseSummary,
-                      style: const TextStyle(fontSize: 13, height: 1.6, fontWeight: FontWeight.w500),
-                    ),
+                    _buildBulletSummaryView(chineseSummary, isChinese: true, isDark: isDark),
                   ],
                 ),
               ),
@@ -672,20 +720,18 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
 
             // Full Executive Summary
             if (doc.summary.isNotEmpty && doc.summary != chineseSummary) ...[
-              const Text(
-                '文獻核心主旨與重點：',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blueGrey),
+              Text(
+                '文獻核心主旨與重點（條列式）：',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.blueGrey.shade200 : Colors.blueGrey.shade800,
+                ),
               ),
               const SizedBox(height: 6),
-              SelectableText(
-                doc.summary,
-                style: const TextStyle(fontSize: 13, height: 1.6),
-              ),
+              _buildBulletSummaryView(doc.summary, isChinese: false, isDark: isDark),
             ] else if (doc.summary.isNotEmpty && chineseSummary.isEmpty) ...[
-              SelectableText(
-                doc.summary,
-                style: const TextStyle(fontSize: 13, height: 1.6),
-              ),
+              _buildBulletSummaryView(doc.summary, isChinese: false, isDark: isDark),
             ],
 
             const SizedBox(height: 12),
@@ -715,6 +761,145 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     );
   }
 
+  /// Builds dynamic bullet-point summary cards with clickable source page citations
+  Widget _buildBulletSummaryView(String summaryText, {bool isChinese = false, required bool isDark}) {
+    if (summaryText.trim().isEmpty) {
+      return const Text('無摘要內容', style: TextStyle(color: Colors.grey));
+    }
+
+    final rawLines = summaryText.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: rawLines.map((line) {
+        // Extract page reference like (P.1), (P. 2), 【P.1】, 【第 1 頁】
+        final pageRegex = RegExp(r'(\(|【)(P\.?\s*([0-9]+)|第\s*([0-9]+)\s*頁)(\)|】)', caseSensitive: false);
+        final matches = pageRegex.allMatches(line);
+
+        int? targetPage;
+        if (matches.isNotEmpty) {
+          final m = matches.first;
+          final pageStr = m.group(3) ?? m.group(4);
+          if (pageStr != null) {
+            targetPage = int.tryParse(pageStr);
+          }
+        }
+
+        // 深色模式加深底色，文字採用清晰明亮高對比配色
+        final itemBgColor = isDark
+            ? (isChinese ? const Color(0xFF0C0904) : const Color(0xFF090D15))
+            : (isChinese ? Colors.amber.shade50.withValues(alpha: 0.85) : Colors.blueGrey.shade50.withValues(alpha: 0.75));
+
+        final itemBorderColor = isDark
+            ? (isChinese ? Colors.amber.shade800.withValues(alpha: 0.45) : Colors.blueGrey.shade800.withValues(alpha: 0.6))
+            : (isChinese ? Colors.amber.shade200 : Colors.blueGrey.shade200);
+
+        final itemTextColor = isDark
+            ? (isChinese ? const Color(0xFFFFFBEB) : const Color(0xFFF8FAFC))
+            : (isChinese ? const Color(0xFF451A03) : const Color(0xFF0F172A));
+
+        final arrowColor = isDark
+            ? (isChinese ? Colors.amber.shade400 : AppTheme.secondaryColor)
+            : (isChinese ? Colors.amber.shade800 : AppTheme.primaryColor);
+
+        final chipBgColor = isDark
+            ? (isChinese ? const Color(0xFF2B1D06) : const Color(0xFF0F263D))
+            : (isChinese ? Colors.amber.shade100 : AppTheme.primaryColor.withValues(alpha: 0.12));
+
+        final chipBorderColor = isDark
+            ? (isChinese ? Colors.amber.shade600.withValues(alpha: 0.6) : AppTheme.primaryColor.withValues(alpha: 0.6))
+            : (isChinese ? Colors.amber.shade300 : AppTheme.primaryColor.withValues(alpha: 0.35));
+
+        final chipTextColor = isDark
+            ? (isChinese ? Colors.amber.shade200 : Colors.lightBlue.shade200)
+            : (isChinese ? Colors.brown.shade800 : AppTheme.primaryColor);
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: itemBgColor,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: itemBorderColor,
+              width: 0.8,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 2, right: 6),
+                child: Icon(
+                  Icons.arrow_right,
+                  size: 16,
+                  color: arrowColor,
+                ),
+              ),
+              Expanded(
+                child: SelectableText(
+                  line,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.5,
+                    fontWeight: FontWeight.w400,
+                    color: itemTextColor,
+                  ),
+                ),
+              ),
+              if (targetPage != null) ...[
+                const SizedBox(width: 6),
+                InkWell(
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: () => _jumpToPage(targetPage!),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: chipBgColor,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: chipBorderColor),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.menu_book, size: 11, color: chipTextColor),
+                        const SizedBox(width: 3),
+                        Text(
+                          'P.$targetPage',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.bold,
+                            color: chipTextColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  void _jumpToPage(int pageNumber) {
+    if (_pages.isEmpty) return;
+    final pageIndex = (pageNumber - 1).clamp(0, _pages.length - 1);
+    _tabController.animateTo(1);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已跳轉至第 $pageNumber 頁版面'),
+        duration: const Duration(seconds: 2),
+        action: SnackBarAction(
+          label: '開啟全螢幕檢視',
+          onPressed: () => _showFullscreenPageViewer(pageIndex),
+        ),
+      ),
+    );
+  }
+
   /// Medical & Structured Tags Card
   Widget _buildMedicalTagsCard(
     Document doc,
@@ -735,7 +920,10 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                   children: [
                     Icon(Icons.medical_services_outlined, color: Colors.teal, size: 20),
                     SizedBox(width: 8),
-                    Text('醫學術語、疾病症狀與多維標籤', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    Text(
+                      '專業醫學標籤分類 (按維度)',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
                   ],
                 ),
                 IconButton(
@@ -781,23 +969,61 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                         ],
                       ),
                       const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        children: tags.map((t) {
-                          return InputChip(
-                            label: Text('${t.name} (${(t.confidence * 100).toInt()}%)'),
-                            avatar: Icon(
-                              t.verified ? Icons.verified : Icons.help_outline,
-                              size: 16,
-                              color: t.verified ? Colors.blue : Colors.orange,
-                            ),
-                            selected: t.verified,
-                            onSelected: (_) => _toggleTagVerified(t),
-                            onDeleted: () => _deleteTag(t),
-                            tooltip: '點擊審核狀態（${t.verified ? '已審核' : '待審核'}）• 來源: ${t.source}',
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final maxLabelWidth = (constraints.maxWidth - 70).clamp(100.0, 1000.0);
+                          return Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            children: tags.map((t) {
+                              return InputChip(
+                                label: ConstrainedBox(
+                                  constraints: BoxConstraints(maxWidth: maxLabelWidth),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (t.codeSystem != null && t.codeSystem!.isNotEmpty) ...[
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                          margin: const EdgeInsets.only(right: 4),
+                                          decoration: BoxDecoration(
+                                            color: Colors.purple.withValues(alpha: 0.18),
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            t.codeSystem!,
+                                            style: const TextStyle(
+                                              fontSize: 9.5,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.purple,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                      Flexible(
+                                        child: Text(
+                                          '${t.name} (${(t.confidence * 100).toInt()}%)',
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 12),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                avatar: Icon(
+                                  t.verified ? Icons.verified : Icons.help_outline,
+                                  size: 16,
+                                  color: t.verified ? Colors.blue : Colors.orange,
+                                ),
+                                selected: t.verified,
+                                onSelected: (_) => _toggleTagVerified(t),
+                                onDeleted: () => _deleteTag(t),
+                                tooltip: '代碼系統: ${t.codeSystem ?? "無"} • 點擊審核狀態（${t.verified ? '已審核' : '待審核'}）• 來源: ${t.source}',
+                              );
+                            }).toList(),
                           );
-                        }).toList(),
+                        },
                       ),
                     ],
                   ),
@@ -810,7 +1036,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
   }
 
   /// Recognized Text Content Section
-  Widget _buildRecognizedTextSection(String allOcrText) {
+  Widget _buildRecognizedTextSection(String allOcrText, bool isDark) {
     return Card(
       elevation: 1,
       child: Padding(
@@ -821,11 +1047,11 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Row(
+                Row(
                   children: [
-                    Icon(Icons.text_snippet_outlined, color: Colors.indigo, size: 20),
-                    SizedBox(width: 8),
-                    Text('辨識後文字內容 (OCR)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    Icon(Icons.text_snippet_outlined, color: isDark ? Colors.indigo.shade300 : Colors.indigo, size: 20),
+                    const SizedBox(width: 8),
+                    const Text('辨識後文字內容 (OCR)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                   ],
                 ),
                 TextButton.icon(
@@ -865,14 +1091,21 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
               constraints: const BoxConstraints(maxHeight: 450),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.grey.withValues(alpha: 0.05),
+                color: isDark ? const Color(0xFF090D14) : Colors.grey.withValues(alpha: 0.05),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
+                border: Border.all(
+                  color: isDark ? Colors.blueGrey.shade800.withValues(alpha: 0.5) : Colors.grey.withValues(alpha: 0.2),
+                ),
               ),
               child: SingleChildScrollView(
                 child: SelectableText(
                   allOcrText.isEmpty ? '尚無文字識別內容' : allOcrText,
-                  style: const TextStyle(fontSize: 13, height: 1.6, fontFamily: 'monospace'),
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.6,
+                    fontFamily: 'monospace',
+                    color: isDark ? const Color(0xFFE2E8F0) : null,
+                  ),
                 ),
               ),
             ),

@@ -1,5 +1,5 @@
 name: smart_doc_search
-description: "A new Flutter project."
+description: "個人智能文獻檢索 - 端側 OCR 與多模型 AI 醫學標籤檢索系統"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 0.1.0+1
 
 environment:
   sdk: ^3.13.4
@@ -43,6 +43,8 @@ dependencies:
   shared_preferences: ^2.3.2
   path: ^1.9.0
   syncfusion_flutter_pdf: ^34.2.8
+  sqflite_common_ffi: ^2.4.3
+  sqlite3_flutter_libs: ^0.6.0+eol
 
 dev_dependencies:
   flutter_test:

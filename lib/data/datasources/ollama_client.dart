@@ -52,6 +52,7 @@ class OllamaClient {
   String embeddingModel;
   String apiKey;
   bool isFastApi;
+  bool diseaseClassificationMode;
 
   OllamaClient({
     Dio? dio,
@@ -61,6 +62,7 @@ class OllamaClient {
     this.embeddingModel = AppConstants.defaultEmbeddingModel,
     this.apiKey = '',
     this.isFastApi = false,
+    this.diseaseClassificationMode = true,
   }) : _dio = dio ??
             Dio(BaseOptions(
               connectTimeout: const Duration(seconds: 15),
@@ -271,37 +273,40 @@ class OllamaClient {
   }
 
   /// Full AI Document Analysis:
-  /// 1. Extracts structured tags: 醫學術語, 疾病/症狀, 疾病分類編碼 (ICD), 主題, 領域, 方法, 對象, 結論
-  /// 2. Produces executive summary for quick verification of query target
-  /// 3. If English / foreign text, produces Chinese summary explanation
+  /// 1. Extracts structured tags (with code_system support: ICD-10, SNOMED)
+  /// 2. Produces dynamic bullet-point executive summary with source page references (e.g. (P.1))
+  /// 3. If English / foreign text, produces bullet-point Chinese summary explanation with page references
+  /// 4. Supports dual prompt templates via mode parameter ('medical_classification' vs 'general')
   Future<AiAnalysisResult> generateAnalysis({
     required String text,
     String? imageBase64,
     List<String>? dimensions,
     String? model,
+    String? mode,
     int maxRetries = 3,
   }) async {
     final targetModel = model ?? textModel;
     final dims = dimensions ?? AppConstants.defaultTagDimensions;
     final cleanHost = host.replaceAll(RegExp(r'/+$'), '');
+    final analysisMode = mode ?? (diseaseClassificationMode ? 'medical_classification' : 'general');
 
     if (isFastApi || provider == AiProvider.fastapi) {
-      return _generateAnalysisViaFastApi(cleanHost, targetModel, text, imageBase64, dims);
+      return _generateAnalysisViaFastApi(cleanHost, targetModel, text, imageBase64, dims, analysisMode);
     }
 
     switch (provider) {
       case AiProvider.ollama:
-        return _generateAnalysisViaOllamaWithRetry(cleanHost, targetModel, text, dims, maxRetries);
+        return _generateAnalysisViaOllamaWithRetry(cleanHost, targetModel, text, dims, maxRetries, analysisMode);
       case AiProvider.deepseek:
-        return _generateAnalysisViaOpenAiCompatible(cleanHost, targetModel, text, dims, maxRetries, isDeepSeek: true);
+        return _generateAnalysisViaOpenAiCompatible(cleanHost, targetModel, text, dims, maxRetries, isDeepSeek: true, mode: analysisMode);
       case AiProvider.openai:
-        return _generateAnalysisViaOpenAiCompatible(cleanHost, targetModel, text, dims, maxRetries, isDeepSeek: false);
+        return _generateAnalysisViaOpenAiCompatible(cleanHost, targetModel, text, dims, maxRetries, isDeepSeek: false, mode: analysisMode);
       case AiProvider.claude:
-        return _generateAnalysisViaClaude(cleanHost, targetModel, text, dims, maxRetries);
+        return _generateAnalysisViaClaude(cleanHost, targetModel, text, dims, maxRetries, analysisMode);
       case AiProvider.google:
-        return _generateAnalysisViaGoogle(cleanHost, targetModel, text, dims, maxRetries);
+        return _generateAnalysisViaGoogle(cleanHost, targetModel, text, dims, maxRetries, analysisMode);
       case AiProvider.fastapi:
-        return _generateAnalysisViaFastApi(cleanHost, targetModel, text, imageBase64, dims);
+        return _generateAnalysisViaFastApi(cleanHost, targetModel, text, imageBase64, dims, analysisMode);
     }
   }
 
@@ -329,15 +334,17 @@ class OllamaClient {
     String text,
     String? imageBase64,
     List<String> dims,
+    String mode,
   ) async {
     try {
       final res = await _dio.post(
         '$targetHost/generate-tags',
         data: {
           'text': text,
-          'image_base64': ?imageBase64,
+          'image_base64': imageBase64,
           'dimensions': dims,
           'model': model,
+          'mode': mode,
         },
       );
       if (res.statusCode == 200 && res.data is Map) {
@@ -363,9 +370,10 @@ class OllamaClient {
     String text,
     List<String> dims,
     int maxRetries,
+    String mode,
   ) async {
     int attempts = 0;
-    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
+    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
 
     while (attempts < maxRetries) {
       attempts++;
@@ -400,7 +408,7 @@ class OllamaClient {
         if (attempts >= maxRetries) rethrow;
       }
 
-      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
+      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
       await Future.delayed(Duration(milliseconds: 500 * attempts));
     }
 
@@ -414,15 +422,21 @@ class OllamaClient {
     List<String> dims,
     int maxRetries, {
     required bool isDeepSeek,
+    required String mode,
   }) async {
     int attempts = 0;
-    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
+    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
 
     final url = targetHost.endsWith('/chat/completions')
         ? targetHost
         : (targetHost.endsWith('/v1')
             ? '$targetHost/chat/completions'
             : '$targetHost/chat/completions');
+
+    final bool isMedicalMode = mode == 'medical_classification';
+    final systemPrompt = isMedicalMode
+        ? '你是一個精準的專業醫學與疾病分類深度分析助手。請嚴格以 JSON 格式回應，包含醫學術語、疾病症狀標籤、疾病分類編碼（如 ICD-10、SNOMED）、code_system 欄位、條列式核心摘要（附帶原文來源頁碼 (P.X)）與英文文獻繁體中文對照說明。'
+        : '你是一個精準的綜合學術文獻深度分析助手。請嚴格以 JSON 格式回應，包含主題/領域/方法等特徵標籤、條列式核心摘要（附帶原文來源頁碼 (P.X)）與英文文獻繁體中文對照說明。';
 
     while (attempts < maxRetries) {
       attempts++;
@@ -432,8 +446,7 @@ class OllamaClient {
           'messages': [
             {
               'role': 'system',
-              'content':
-                  '你是一個精準的專業文獻與醫學分析助手。請嚴格以 JSON 格式回應，包含醫學術語、疾病症狀標籤、疾病分類編碼（如 ICD）、核心摘要與英文文獻之中文說明。'
+              'content': systemPrompt,
             },
             {
               'role': 'user',
@@ -465,7 +478,7 @@ class OllamaClient {
         if (attempts >= maxRetries) rethrow;
       }
 
-      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
+      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
       await Future.delayed(Duration(milliseconds: 500 * attempts));
     }
 
@@ -478,10 +491,15 @@ class OllamaClient {
     String text,
     List<String> dims,
     int maxRetries,
+    String mode,
   ) async {
     int attempts = 0;
-    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
+    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
     final url = '$targetHost/messages';
+    final bool isMedicalMode = mode == 'medical_classification';
+    final systemPrompt = isMedicalMode
+        ? '你是一個精準的專業醫學與疾病分類深度分析助手。請嚴格以 JSON 格式輸出結構化分析，包含醫學術語、疾病症狀、ICD分類碼、code_system 欄位、條列式核心摘要（附帶原文來源頁碼 (P.X)）及英文文獻中文對照說明。勿輸出任何 markdown 區塊外的文字。'
+        : '你是一個精準的綜合學術文獻深度分析助手。請嚴格以 JSON 格式輸出結構化分析，包含主題/領域/方法特徵標籤、條列式核心摘要（附帶原文來源頁碼 (P.X)）及英文文獻中文對照說明。勿輸出任何 markdown 區塊外的文字。';
 
     while (attempts < maxRetries) {
       attempts++;
@@ -489,8 +507,7 @@ class OllamaClient {
         final payload = {
           'model': model,
           'max_tokens': 2048,
-          'system':
-              '你是一個精準的專業文獻與醫學分析助手。請嚴格以 JSON 格式輸出結構化分析，包含醫學術語、疾病症狀、ICD分類碼、核心摘要及英文文獻中文對照說明。勿輸出任何 markdown 區塊外的文字說明。',
+          'system': systemPrompt,
           'messages': [
             {
               'role': 'user',
@@ -524,7 +541,7 @@ class OllamaClient {
         if (attempts >= maxRetries) rethrow;
       }
 
-      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
+      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
       await Future.delayed(Duration(milliseconds: 500 * attempts));
     }
 
@@ -537,9 +554,10 @@ class OllamaClient {
     String text,
     List<String> dims,
     int maxRetries,
+    String mode,
   ) async {
     int attempts = 0;
-    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
+    String promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
     final url = '$targetHost/models/$model:generateContent';
 
     while (attempts < maxRetries) {
@@ -584,43 +602,79 @@ class OllamaClient {
         if (attempts >= maxRetries) rethrow;
       }
 
-      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts);
+      promptText = _buildAnalysisPrompt(text, dims, attempt: attempts, mode: mode);
       await Future.delayed(Duration(milliseconds: 500 * attempts));
     }
 
     return AiAnalysisResult(tags: []);
   }
 
-  String _buildAnalysisPrompt(String text, List<String> dims, {int attempt = 0}) {
+  /// Public helper to build analysis prompt based on text, dimensions, and mode
+  String buildAnalysisPrompt(
+    String text, {
+    List<String>? dims,
+    int attempt = 0,
+    String? mode,
+  }) {
+    final effectiveMode = mode ?? (diseaseClassificationMode ? 'medical_classification' : 'general');
+    final effectiveDims = dims ?? AppConstants.defaultTagDimensions;
+    return _buildAnalysisPrompt(text, effectiveDims, attempt: attempt, mode: effectiveMode);
+  }
+
+  String _buildAnalysisPrompt(
+    String text,
+    List<String> dims, {
+    int attempt = 0,
+    String mode = 'medical_classification',
+  }) {
     // Expand to modern LLM capacity (up to 35,000 characters)
     final truncatedText = text.length > 35000 ? text.substring(0, 35000) : text;
     final dimListStr = dims.join('、');
+    final bool isMedicalMode = (mode == 'medical_classification');
 
-    return '''你是一個專業的醫學與學術文獻深度分析專家。請仔細閱讀下方提供的【文獻完整全文內容】，進行全面深度分析、多維特徵辨識、醫學術語抽取、疾病與症狀分類編碼，並撰寫結構化摘要。
+    if (isMedicalMode) {
+      return '''你是一個專業的醫學與疾病分類深度分析專家。請仔細閱讀下方提供的【文獻完整全文內容】，進行全面深度分析、多維特徵辨識、醫學術語抽取、疾病與症狀分類編碼，並撰寫條列式結構化摘要。
 
 【重大要求 1 - 標籤辨識必須基於全文內容進行辨識】：
 - 標籤辨識絕不能僅僅依據標題或摘要文件，必須徹底基於下方的【全文內容】進行全面掃描與抽取！
-- 請深入全文的所有章節、標題、內文段落、表格數據、病歷診斷、討論與結論，抽取所有涉及的：
-  a) 醫學術語（medical_terms）：核心醫學專有名詞、解剖構造、病理生理學術語、治療技術、藥物成分。
-  b) 疾病/症狀（diseases_and_symptoms）：全文探討或提及的所有具體疾病名稱、臨床綜合徵、主要體徵與症狀。
-  c) 疾病分類編碼（classification_codes）：全文中提及或對應之 ICD-10-CM / ICD-10-PCS / ICD-11 或醫學標準分類編碼。
-  d) 其他多維標籤：從 $dimListStr 等維度提取具有檢索價值的專業標籤。
+- 深入全文的所有章節、標題、內文段落、病歷診斷、臨床案例、討論與結論，全面強化抽取：
+  a) 醫學術語（medical_terms）：核心醫學專有名詞、解剖構造、病理生理學術語、臨床檢查、處置技術、藥物成分。
+  b) 疾病/症狀（diseases_and_symptoms）：全文探討或提及的所有具體疾病名稱、症候群、臨床體徵與症狀、器官病灶、併發症。
+  c) 疾病分類編碼（classification_codes）：全文中提及或依編碼規則對應之 ICD-10-CM / ICD-10-PCS / ICD-11 / SNOMED-CT 標準編碼。
+  d) tags 陣列：包含上述各標籤，且疾病分類編碼相關標籤必須填寫 "code_system" 欄位（如 "ICD-10-CM"、"ICD-10-PCS"、"SNOMED-CT"）。
+  e) 其他多維標籤：從 $dimListStr 等維度提取具有檢索價值的專業標籤。
 
-【重大要求 2 - 文獻摘要說明必須以全文內容進行摘要，包含各標題內文字】：
-- 文獻核心摘要（summary）與英文文獻中文摘要說明（chinese_summary）必須全面涵蓋【全文內容】，嚴格包含文獻中出現的「各章節標題」以及「各標題底下所屬內文」。
-- 請以清晰結構化方式呈現：研究背景主旨、各主要章節/標題論述精華、具體探討之疾病病例與處置方法、以及全文最終結論與編碼指導（約 200-450 字）。
-- 若原文為英文或外文，chinese_summary 必須提供詳盡的繁體中文摘要說明，明確總結各標題與內文核心，以便讀者在文獻詳情頁頂端立即確認是否為查詢目標！
+【重大要求 2 - 文獻摘要撰寫方式改為條列式，且附帶來源頁碼】：
+- 文獻核心摘要（summary）與英文文獻中文摘要說明（chinese_summary）必須全面改為【條列式】呈現，摘錄文獻各項目撰寫內容。
+- 條列項目請依文獻類型動態調整結構（包含各標題內文字）：
+  * 論文/學術研究類：
+    • 【研究背景與目的】(P.X) ...
+    • 【研究方法與對象】(P.X) ...
+    • 【主要發現與臨床數據】(P.X) ...
+    • 【結論與臨床意涵】(P.X) ...
+  * 簡報/投影片類：
+    • 【簡報核心主旨】(P.X) ...
+    • 【各主題要點與關鍵洞察】(P.X) ...
+    • 【行動指引與總結】(P.X) ...
+  * 報告書/指引手冊/Coding Clinic類：
+    • 【發布背景與規範目的】(P.X) ...
+    • 【案例解析與核心規則】(P.X) ...
+    • 【疾病分類與編碼指導】(P.X) ...
+    • 【臨床注意事項與併發症考量】(P.X) ...
+- 【關鍵規定 - 來源頁碼】：每一條列項目必須附帶原文來源頁碼（如 (P.1)、(P.2) 或 (P.1-P.2) 等），方便使用者精準回溯原文！
+- 若原文為英文或外文，chinese_summary 必須提供詳盡的條列式繁體中文摘要說明並附帶來源頁碼。
 
 請嚴格輸出合法的 JSON 格式，不要輸出任何額外文字：
 {
   "detected_language": "en 或 zh",
-  "summary": "涵蓋全文各章節標題與內文字的完整摘要...",
-  "chinese_summary": "針對英文文獻之繁體中文摘要說明（深入涵蓋各標題內文重點）...",
+  "summary": "• 【項目一】(P.1) 內文重點...\\n• 【項目二】(P.2) 內文重點...",
+  "chinese_summary": "• 【項目一】(P.1) 繁體中文重點說明...\\n• 【項目二】(P.2) 繁體中文重點說明...",
   "medical_terms": ["醫學專有名詞1", "醫學專有名詞2"],
   "diseases_and_symptoms": ["疾病或症狀名稱1", "疾病或症狀名稱2"],
   "classification_codes": ["ICD-10/11編碼", "相關分類代碼"],
   "tags": [
-    {"name": "標籤名稱", "category": "疾病/症狀 或 醫學術語 或 疾病分類編碼 或 主題", "confidence": 0.95}
+    {"name": "標籤名稱", "category": "疾病分類編碼", "code_system": "ICD-10-CM", "confidence": 0.95},
+    {"name": "標籤名稱", "category": "疾病/症狀 或 醫學術語 或 主題", "confidence": 0.95}
   ]
 }
 
@@ -629,6 +683,50 @@ class OllamaClient {
 $truncatedText
 ---
 ''';
+    } else {
+      // 一般文獻辨識模式（關閉疾病分類模式時）
+      return '''你是一個綜合學術文獻與專業資料深度分析專家。請仔細閱讀下方提供的【文獻完整全文內容】，進行全面深度分析、多維特徵辨識、主題標籤抽取，並撰寫條列式結構化摘要。
+
+【重大要求 1 - 標籤辨識必須基於全文內容進行辨識】：
+- 標籤辨識絕不能僅僅依據標題或摘要文件，必須徹底基於下方的【全文內容】進行全面掃描與抽取！
+- 本模式為一般文獻辨識模式，重點在於一般學術與知識領域特徵抽取，不須強調疾病分類相關內容的辨識。
+- 請深入全文的所有章節、標題、內文段落，從 $dimListStr（主題、領域、方法、對象、結論、技術概念等）維度提取具有檢索價值的專業標籤。
+
+【重大要求 2 - 文獻摘要撰寫方式改為條列式，且附帶來源頁碼】：
+- 文獻核心摘要（summary）與英文文獻中文摘要說明（chinese_summary）必須改為【條列式】呈現，摘錄文獻各項目撰寫內容。
+- 條列項目請依文獻類型動態調整結構（包含各標題內文字）：
+  * 學術論文類：
+    • 【研究背景與主旨】(P.X) ...
+    • 【研究方法與技術架構】(P.X) ...
+    • 【實驗成果與核心數據】(P.X) ...
+    • 【主要結論與未來展望】(P.X) ...
+  * 簡報/投影片類：
+    • 【簡報核心主旨】(P.X) ...
+    • 【關鍵論點與洞察】(P.X) ...
+    • 【行動方案與總結】(P.X) ...
+  * 報告書/技術文件類：
+    • 【報告背景與目標】(P.X) ...
+    • 【核心內容與要點】(P.X) ...
+    • 【建議措施與實施方針】(P.X) ...
+- 【關鍵規定 - 來源頁碼】：每一條列項目必須附帶原文來源頁碼（如 (P.1)、(P.2) 等），方便使用者精準回溯原文！
+- 若原文為英文或外文，chinese_summary 必須提供詳盡的條列式繁體中文摘要說明並附帶來源頁碼。
+
+請嚴格輸出合法的 JSON 格式，不要輸出任何額外文字：
+{
+  "detected_language": "en 或 zh",
+  "summary": "• 【項目一】(P.1) 內文重點...\\n• 【項目二】(P.2) 內文重點...",
+  "chinese_summary": "• 【項目一】(P.1) 繁體中文重點說明...\\n• 【項目二】(P.2) 繁體中文重點說明...",
+  "tags": [
+    {"name": "標籤名稱", "category": "主題 或 領域 或 方法 或 結論", "confidence": 0.95}
+  ]
+}
+
+文獻完整全文內容：
+---
+$truncatedText
+---
+''';
+    }
   }
 
   AiAnalysisResult _parseJsonAnalysis(String content) {
@@ -683,12 +781,22 @@ $truncatedText
           final norm = TextNormalizer.normalizeTag(c);
           if (norm.isNotEmpty && !existingNames.contains(norm.toLowerCase())) {
             existingNames.add(norm.toLowerCase());
+            String? codeSys = 'ICD-10-CM';
+            final upper = norm.toUpperCase();
+            if (upper.contains('PCS') || RegExp(r'^[0-9A-Z]{7}$').hasMatch(upper)) {
+              codeSys = 'ICD-10-PCS';
+            } else if (upper.contains('SNOMED') || (int.tryParse(norm) != null && norm.length > 6)) {
+              codeSys = 'SNOMED-CT';
+            } else if (upper.contains('ICD-11') || RegExp(r'^[0-9][A-Z][0-9]').hasMatch(upper)) {
+              codeSys = 'ICD-11';
+            }
             parsedTags.add(TagItem(
               id: 'med_c_${DateTime.now().microsecondsSinceEpoch}_${parsedTags.length}',
               name: norm,
               category: '疾病分類編碼',
               confidence: 0.92,
               source: 'ai_analysis',
+              codeSystem: codeSys,
             ));
           }
         }
@@ -739,6 +847,17 @@ $truncatedText
 
         final category = (item['category'] ?? item['dimension'] ?? '主題').toString();
         final conf = (item['confidence'] is num) ? (item['confidence'] as num).toDouble() : 0.9;
+        var codeSystem = (item['code_system'] ?? item['codeSystem'])?.toString();
+        if (codeSystem == null && category == '疾病分類編碼') {
+          final upper = normalizedName.toUpperCase();
+          if (upper.contains('PCS') || RegExp(r'^[0-9A-Z]{7}$').hasMatch(upper)) {
+            codeSystem = 'ICD-10-PCS';
+          } else if (upper.contains('SNOMED') || (int.tryParse(normalizedName) != null && normalizedName.length > 6)) {
+            codeSystem = 'SNOMED-CT';
+          } else {
+            codeSystem = 'ICD-10-CM';
+          }
+        }
 
         results.add(TagItem(
           id: 'tag_${DateTime.now().microsecondsSinceEpoch}_${results.length}',
@@ -747,6 +866,7 @@ $truncatedText
           confidence: conf,
           source: source,
           verified: false,
+          codeSystem: codeSystem,
         ));
       }
     }
