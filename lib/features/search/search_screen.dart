@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
@@ -27,6 +28,7 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchCtrl = TextEditingController();
+  StreamSubscription? _dataSub;
 
   List<TagDefinition> _allTags = [];
   final Set<String> _selectedTags = {};
@@ -47,6 +49,19 @@ class _SearchScreenState extends State<SearchScreen> {
     }
     _loadTags();
     _performSearch();
+    _dataSub = widget.repository.onDataChanged.listen((_) {
+      if (mounted) {
+        _loadTags();
+        _performSearch();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _dataSub?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadTags() async {

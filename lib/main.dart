@@ -267,6 +267,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     setState(() {
       _currentIndex = index;
     });
+    widget.repository.notifyDataChanged(immediate: true);
   }
 
   void _onQuickSearch(String query) {
@@ -274,6 +275,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
       _prefilledSearchQuery = query;
       _currentIndex = 1; // Search tab
     });
+    widget.repository.notifyDataChanged(immediate: true);
   }
 
   @override
@@ -295,7 +297,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
       ImportScreen(
         importService: widget.importService,
         onImportSuccess: () {
-          // After import, user can see results
+          widget.repository.notifyDataChanged(immediate: true);
         },
       ),
       TagManagementScreen(
@@ -321,6 +323,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
             if (idx != 1) _prefilledSearchQuery = null;
             _currentIndex = idx;
           });
+          widget.repository.notifyDataChanged(immediate: true);
         },
         destinations: const [
           NavigationDestination(

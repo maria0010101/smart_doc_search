@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
@@ -14,6 +15,7 @@ class TagManagementScreen extends StatefulWidget {
 }
 
 class _TagManagementScreenState extends State<TagManagementScreen> {
+  StreamSubscription? _dataSub;
   List<TagDefinition> _tags = [];
   bool _isLoading = true;
   String _searchQuery = '';
@@ -22,10 +24,23 @@ class _TagManagementScreenState extends State<TagManagementScreen> {
   void initState() {
     super.initState();
     _loadTags();
+    _dataSub = widget.repository.onDataChanged.listen((_) {
+      if (mounted) {
+        _loadTags(showLoading: false);
+      }
+    });
   }
 
-  Future<void> _loadTags() async {
-    setState(() => _isLoading = true);
+  @override
+  void dispose() {
+    _dataSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadTags({bool showLoading = true}) async {
+    if (showLoading && _tags.isEmpty) {
+      setState(() => _isLoading = true);
+    }
     final list = await widget.repository.getAllTags();
     list.sort((a, b) => b.usageCount.compareTo(a.usageCount));
     if (mounted) {

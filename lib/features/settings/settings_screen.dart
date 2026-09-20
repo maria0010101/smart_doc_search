@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -27,6 +28,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   AiProvider _selectedProvider = AiProvider.ollama;
   bool _diseaseClassificationMode = true;
+  StreamSubscription? _dataSub;
 
   // Controllers per Provider
   final TextEditingController _ollamaHostCtrl = TextEditingController();
@@ -87,6 +89,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _initDefaults();
     _loadPreferences();
     _loadStats();
+    _dataSub = widget.repository.onDataChanged.listen((_) {
+      if (mounted) {
+        _loadStats();
+      }
+    });
   }
 
   void _initDefaults() {
@@ -100,6 +107,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    _dataSub?.cancel();
     _ollamaHostCtrl.dispose();
     _fastApiHostCtrl.dispose();
     _deepSeekKeyCtrl.dispose();

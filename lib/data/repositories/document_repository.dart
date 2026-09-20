@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -22,19 +23,50 @@ class RestoreResult {
 
 class DocumentRepository {
   final KoreDbDataSource dataSource;
+  final _changeController = StreamController<void>.broadcast();
+  Timer? _notifyDebounceTimer;
 
   DocumentRepository({required this.dataSource});
 
+  Stream<void> get onDataChanged => _changeController.stream;
+
+  void notifyDataChanged({bool immediate = false}) {
+    if (immediate) {
+      _notifyDebounceTimer?.cancel();
+      if (!_changeController.isClosed) {
+        _changeController.add(null);
+      }
+      return;
+    }
+    _notifyDebounceTimer?.cancel();
+    _notifyDebounceTimer = Timer(const Duration(milliseconds: 100), () {
+      if (!_changeController.isClosed) {
+        _changeController.add(null);
+      }
+    });
+  }
+
+  void dispose() {
+    _notifyDebounceTimer?.cancel();
+    _changeController.close();
+  }
+
   Future<String> saveDocument(Document doc) async {
-    return dataSource.insertDocument(doc);
+    final id = await dataSource.insertDocument(doc);
+    notifyDataChanged();
+    return id;
   }
 
   Future<bool> updateDocument(Document doc) async {
-    return dataSource.updateDocument(doc);
+    final result = await dataSource.updateDocument(doc);
+    if (result) notifyDataChanged();
+    return result;
   }
 
   Future<bool> deleteDocument(String id) async {
-    return dataSource.deleteDocument(id);
+    final result = await dataSource.deleteDocument(id);
+    if (result) notifyDataChanged();
+    return result;
   }
 
   Future<Document?> getDocument(String id) async {
@@ -63,11 +95,15 @@ class DocumentRepository {
   }
 
   Future<bool> updateTag(TagDefinition tag) async {
-    return dataSource.updateTag(tag);
+    final result = await dataSource.updateTag(tag);
+    if (result) notifyDataChanged();
+    return result;
   }
 
   Future<bool> deleteTag(String tagId) async {
-    return dataSource.deleteTag(tagId);
+    final result = await dataSource.deleteTag(tagId);
+    if (result) notifyDataChanged();
+    return result;
   }
 
   Future<bool> mergeTags(String sourceTagId, String targetTagId) async {
@@ -125,6 +161,7 @@ class DocumentRepository {
 
     // Delete source tag definition
     await dataSource.deleteTag(sourceTagId);
+    notifyDataChanged();
     return true;
   }
 
@@ -229,7 +266,9 @@ class DocumentRepository {
   }
 
   Future<bool> restoreBackup(String backupJson) async {
-    return dataSource.restoreBackup(backupJson);
+    final result = await dataSource.restoreBackup(backupJson);
+    if (result) notifyDataChanged(immediate: true);
+    return result;
   }
 
   /// Restores backup from raw bytes or string with:
@@ -358,6 +397,7 @@ class DocumentRepository {
       }
 
       final stats = await dataSource.getStats();
+      notifyDataChanged(immediate: true);
       return RestoreResult(
         success: true,
         message: '成功還原備份！已匯入 ${stats['documentCount']} 份文獻、${stats['pageCount']} 頁面、${stats['tagCount']} 個標籤 (Schema v$version -> v2.0)',
@@ -374,7 +414,9 @@ class DocumentRepository {
   }
 
   Future<bool> clearAll() async {
-    return dataSource.clearAll();
+    final result = await dataSource.clearAll();
+    if (result) notifyDataChanged(immediate: true);
+    return result;
   }
 
   Future<bool> openFile(String filePath) async {

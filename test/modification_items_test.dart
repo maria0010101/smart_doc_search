@@ -447,4 +447,118 @@ void main() {
       await desktopSource.close();
     });
   });
+
+  group('6. Reactive Data Change Notification Stream Tests', () {
+    test('saveDocument, updateDocument, and deleteDocument trigger onDataChanged', () async {
+      final desktopSource = SqliteDesktopDataSource(customDbPath: inMemoryDatabasePath);
+      final repo = DocumentRepository(dataSource: desktopSource);
+
+      int changeEvents = 0;
+      final sub = repo.onDataChanged.listen((_) => changeEvents++);
+
+      final doc = Document(
+        id: 'doc-reactive-1',
+        title: 'Reactive Test Doc',
+        filePath: '/test/reactive.pdf',
+        sourceType: 'pdf',
+        fileHash: 'hash-reactive-1',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+        pageCount: 1,
+        language: 'zh-TW',
+        tags: [TagItem(id: 't1', name: '測試標籤', category: '主題')],
+      );
+
+      // Save
+      await repo.saveDocument(doc);
+      await Future.delayed(const Duration(milliseconds: 150));
+      expect(changeEvents, 1);
+
+      // Update
+      final updated = doc.copyWith(title: 'Updated Title');
+      await repo.updateDocument(updated);
+      await Future.delayed(const Duration(milliseconds: 150));
+      expect(changeEvents, 2);
+
+      // Delete
+      await repo.deleteDocument(doc.id);
+      await Future.delayed(const Duration(milliseconds: 150));
+      expect(changeEvents, 3);
+
+      await sub.cancel();
+      repo.dispose();
+      await desktopSource.close();
+    });
+
+    test('updateTag, deleteTag, and mergeTags trigger onDataChanged', () async {
+      final desktopSource = SqliteDesktopDataSource(customDbPath: inMemoryDatabasePath);
+      final repo = DocumentRepository(dataSource: desktopSource);
+
+      final tag = TagDefinition(
+        id: 'tag-react-1',
+        name: '反應式測試標籤',
+        category: '主題',
+        usageCount: 1,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      );
+
+      // Seed tag
+      await repo.restoreBackupWithValidation(json.encode({
+        'version': '2.0',
+        'documents': [],
+        'pages': [],
+        'tags': [tag.toMap()],
+      }));
+
+      int changeEvents = 0;
+      final sub = repo.onDataChanged.listen((_) => changeEvents++);
+
+      // Update existing tag
+      final updatedTag = tag.copyWith(name: '反應式更新標籤');
+      final updateOk = await repo.updateTag(updatedTag);
+      expect(updateOk, isTrue);
+      await Future.delayed(const Duration(milliseconds: 150));
+      expect(changeEvents, 1);
+
+      // Delete existing tag
+      final deleteOk = await repo.deleteTag(tag.id);
+      expect(deleteOk, isTrue);
+      await Future.delayed(const Duration(milliseconds: 150));
+      expect(changeEvents, 2);
+
+      await sub.cancel();
+      repo.dispose();
+      await desktopSource.close();
+    });
+
+    test('restoreBackup and clearAll trigger immediate onDataChanged', () async {
+      final desktopSource = SqliteDesktopDataSource(customDbPath: inMemoryDatabasePath);
+      final repo = DocumentRepository(dataSource: desktopSource);
+
+      int changeEvents = 0;
+      final sub = repo.onDataChanged.listen((_) => changeEvents++);
+
+      final backupJson = json.encode({
+        'version': '2.0',
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+        'documents': [],
+        'pages': [],
+        'tags': [],
+      });
+
+      await repo.restoreBackupWithValidation(backupJson);
+      // immediate: true doesn't need 100ms debounce
+      await Future.delayed(const Duration(milliseconds: 10));
+      expect(changeEvents, 1);
+
+      await repo.clearAll();
+      await Future.delayed(const Duration(milliseconds: 10));
+      expect(changeEvents, 2);
+
+      await sub.cancel();
+      repo.dispose();
+      await desktopSource.close();
+    });
+  });
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
@@ -26,6 +27,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchCtrl = TextEditingController();
+  StreamSubscription? _dataSub;
   List<Document> _recentDocs = [];
   Map<String, dynamic> _stats = {};
   bool _isLoading = true;
@@ -37,6 +39,18 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadData();
     _checkOllama();
+    _dataSub = widget.repository.onDataChanged.listen((_) {
+      if (mounted) {
+        _loadData(showLoading: false);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _dataSub?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _checkOllama() async {
@@ -46,8 +60,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _loadData() async {
-    setState(() => _isLoading = true);
+  Future<void> _loadData({bool showLoading = true}) async {
+    if (showLoading && _recentDocs.isEmpty) {
+      setState(() => _isLoading = true);
+    }
     final docs = await widget.repository.getAllDocuments();
     final stats = await widget.repository.getStorageStats();
 
