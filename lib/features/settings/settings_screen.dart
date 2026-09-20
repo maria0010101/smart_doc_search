@@ -362,8 +362,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _exportBackup() async {
     try {
-      final gzPath = await widget.repository.exportBackupToFile(compress: true);
-      final jsonPath = await widget.repository.exportBackupToFile(compress: false);
+      final now = DateTime.now();
+      final gzPath = await widget.repository.exportBackupToFile(compress: true, timestamp: now);
+      final jsonPath = await widget.repository.exportBackupToFile(compress: false, timestamp: now);
       final gzFile = File(gzPath);
       final gzSize = await gzFile.exists() ? (await gzFile.length()) : 0;
       final jsonFile = File(jsonPath);
@@ -377,14 +378,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 Icon(Icons.check_circle, color: Colors.teal),
                 SizedBox(width: 8),
-                Text('資料庫備份導出成功'),
+                Text('KoreDB 資料庫備份匯出成功'),
               ],
             ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('已成功將全部 Document、Page、Tag 資料庫內容匯出備份：'),
+                const Text('已成功將 KoreDB 全文資料庫匯出至手機【下載 (Download)】資料夾，檔名具備匯出年月日：'),
                 const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.all(10),
@@ -409,7 +410,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  '此備份檔案完全符合標準交換 Schema，可於 Android APK (KoreDB) 與 Windows 11 (SQLite) 桌面版之間雙向匯入互通！',
+                  '提示：您可隨時由手機「檔案管理員 ➔ 下載 (Download)」查閱或傳送檔案，此備份完全符合標準交換 Schema，可於 Android APK (KoreDB) 與 Windows 11 (SQLite) 桌面版之間雙向匯入互通！',
                   style: TextStyle(fontSize: 12, color: Colors.blueGrey),
                 ),
               ],

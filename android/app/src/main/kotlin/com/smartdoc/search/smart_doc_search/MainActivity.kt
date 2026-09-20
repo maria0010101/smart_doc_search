@@ -173,6 +173,19 @@ class MainActivity : FlutterActivity() {
                                 runOnUiThread { result.error("COPY_ERROR", e.message, null) }
                             }
                         }
+                        "exportBackupToDownloads" -> {
+                            val fileName = call.argument<String>("fileName") ?: "koredb_backup.json"
+                            val bytes = call.argument<ByteArray>("bytes")
+                            val content = call.argument<String>("content")
+                            val dataBytes = bytes ?: (content?.toByteArray(Charsets.UTF_8) ?: ByteArray(0))
+                            val mimeType = if (fileName.endsWith(".gz", ignoreCase = true)) "application/gzip" else "application/json"
+                            try {
+                                val savedPath = exportFileToDownloads(fileName, dataBytes, mimeType)
+                                runOnUiThread { result.success(savedPath) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("EXPORT_ERROR", e.message, null) }
+                            }
+                        }
                         "openFile" -> {
                             val filePath = call.argument<String>("filePath") ?: ""
                             val file = java.io.File(filePath)
@@ -195,6 +208,8 @@ class MainActivity : FlutterActivity() {
                                     filePath.endsWith(".md", ignoreCase = true) || filePath.endsWith(".markdown", ignoreCase = true) -> "text/markdown"
                                     filePath.endsWith(".csv", ignoreCase = true) -> "text/csv"
                                     filePath.endsWith(".json", ignoreCase = true) -> "application/json"
+                                    filePath.endsWith(".gz", ignoreCase = true) -> "application/gzip"
+                                    filePath.endsWith(".zip", ignoreCase = true) -> "application/zip"
                                     filePath.endsWith(".ppt", ignoreCase = true) || filePath.endsWith(".pptx", ignoreCase = true) -> "application/vnd.ms-powerpoint"
                                     else -> "*/*"
                                 }
@@ -267,6 +282,108 @@ class MainActivity : FlutterActivity() {
         if (!internalDocs.exists()) internalDocs.mkdirs()
         val targetFile = java.io.File(internalDocs, name)
         sourceFile.copyTo(targetFile, overwrite = true)
+        return targetFile.absolutePath
+    }
+
+    /**
+     * Exports database backup file to the device public Downloads directory (/storage/emulated/0/Download).
+     * Strategy 1: MediaStore.Downloads (Android 10+ / API 29+), standard scoped storage.
+     * Strategy 2: Direct write to Environment.DIRECTORY_DOWNLOADS.
+     * Strategy 3: App external files Downloads directory.
+     * Strategy 4: App internal files directory.
+     */
+    private fun exportFileToDownloads(fileName: String, dataBytes: ByteArray, mimeType: String): String {
+        // Strategy 1: MediaStore.Downloads (Android Q+, API 29+)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            try {
+                val resolver = applicationContext.contentResolver
+                // Remove existing entry with identical name in MediaStore if present
+                try {
+                    val projection = arrayOf(android.provider.MediaStore.MediaColumns._ID)
+                    val selection = "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME} = ?"
+                    val selectionArgs = arrayOf(fileName)
+                    resolver.query(
+                        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        projection, selection, selectionArgs, null
+                    )?.use { cursor ->
+                        while (cursor.moveToNext()) {
+                            val id = cursor.getLong(cursor.getColumnIndexOrThrow(android.provider.MediaStore.MediaColumns._ID))
+                            val deleteUri = android.content.ContentUris.withAppendedId(
+                                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, id
+                            )
+                            resolver.delete(deleteUri, null, null)
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                val contentValues = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                    put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+
+                val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                if (uri != null) {
+                    resolver.openOutputStream(uri)?.use { os ->
+                        os.write(dataBytes)
+                        os.flush()
+                    }
+                    contentValues.clear()
+                    contentValues.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                    resolver.update(uri, contentValues, null, null)
+
+                    val publicDownloads = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                    val targetFile = java.io.File(publicDownloads, fileName)
+                    if (targetFile.exists() && targetFile.length() > 0) {
+                        return targetFile.absolutePath
+                    }
+                    return "/storage/emulated/0/Download/$fileName"
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("MainActivity", "MediaStore export to Downloads failed: ${e.message}")
+            }
+        }
+
+        // Strategy 2: Direct file write to public Download directory
+        try {
+            val publicDownloads = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            if (!publicDownloads.exists()) {
+                publicDownloads.mkdirs()
+            }
+            val targetFile = java.io.File(publicDownloads, fileName)
+            targetFile.writeBytes(dataBytes)
+            if (targetFile.exists() && targetFile.length() > 0) {
+                android.media.MediaScannerConnection.scanFile(
+                    applicationContext,
+                    arrayOf(targetFile.absolutePath),
+                    arrayOf(mimeType),
+                    null
+                )
+                return targetFile.absolutePath
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("MainActivity", "Direct Download folder write failed: ${e.message}")
+        }
+
+        // Strategy 3: App external files Downloads directory
+        try {
+            val extDownloadDir = applicationContext.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
+            if (extDownloadDir != null) {
+                if (!extDownloadDir.exists()) extDownloadDir.mkdirs()
+                val targetFile = java.io.File(extDownloadDir, fileName)
+                targetFile.writeBytes(dataBytes)
+                if (targetFile.exists() && targetFile.length() > 0) {
+                    return targetFile.absolutePath
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Strategy 4: App internal files directory
+        val internalDir = java.io.File(applicationContext.filesDir, "Download")
+        if (!internalDir.exists()) internalDir.mkdirs()
+        val targetFile = java.io.File(internalDir, fileName)
+        targetFile.writeBytes(dataBytes)
         return targetFile.absolutePath
     }
 }

@@ -212,6 +212,34 @@ void main() {
       expect(docsAfterRollback.length, 1);
       expect(docsAfterRollback.first.id, 'backup-doc-1');
     });
+
+    test('exportBackupToFile formats filename with koredb_backup_ and yyyyMMdd date info', () async {
+      final tempDir = await Directory.systemTemp.createTemp('koredb_test_');
+      final testTime = DateTime(2026, 9, 20, 15, 30, 45);
+      final gzPath = await repository.exportBackupToFile(compress: true, timestamp: testTime, targetDirectory: tempDir);
+      final jsonPath = await repository.exportBackupToFile(compress: false, timestamp: testTime, targetDirectory: tempDir);
+
+      expect(gzPath.contains('koredb_backup_20260920_153045.json.gz'), isTrue);
+      expect(jsonPath.contains('koredb_backup_20260920_153045.json'), isTrue);
+
+      final gzFile = File(gzPath);
+      final jsonFile = File(jsonPath);
+      expect(await gzFile.exists(), isTrue);
+      expect(await jsonFile.exists(), isTrue);
+
+      // Verify file content is valid
+      final gzBytes = await gzFile.readAsBytes();
+      expect(gzBytes[0], 0x1f);
+      expect(gzBytes[1], 0x8b);
+
+      final jsonContent = await jsonFile.readAsString();
+      final map = jsonDecode(jsonContent) as Map<String, dynamic>;
+      expect(map['version'], '2.0');
+      expect(map['documents'], isNotEmpty);
+
+      // Clean up test files and temp dir
+      await tempDir.delete(recursive: true);
+    });
   });
 
   group('4. SQLite Desktop DataSource & Cross-Platform Schema Interchange Tests', () {

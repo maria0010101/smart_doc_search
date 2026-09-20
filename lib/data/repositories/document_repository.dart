@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 
@@ -151,23 +153,76 @@ class DocumentRepository {
     return gzip.encode(bytes);
   }
 
-  /// Exports backup to a file in application Documents/Backups folder, returns saved file path.
-  Future<String> exportBackupToFile({bool compress = true}) async {
-    final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
-    final appDir = await getApplicationDocumentsDirectory();
-    final backupDir = Directory('${appDir.path}/SmartDocSearch/Backups');
+  /// Exports backup to a file in device Downloads folder (on Android / Desktop), returns saved file path.
+  /// The filename includes export date and time (Year, Month, Day, Hour, Minute, Second):
+  /// e.g. koredb_backup_YYYYMMDD_HHmmss.json.gz or koredb_backup_YYYYMMDD_HHmmss.json
+  Future<String> exportBackupToFile({
+    bool compress = true,
+    DateTime? timestamp,
+    Directory? targetDirectory,
+  }) async {
+    final now = timestamp ?? DateTime.now();
+    final dateStr = DateFormat('yyyyMMdd_HHmmss').format(now);
+    final fileName = compress
+        ? 'koredb_backup_$dateStr.json.gz'
+        : 'koredb_backup_$dateStr.json';
+
+    // If caller explicitly specified a directory, use it directly
+    if (targetDirectory != null) {
+      if (!await targetDirectory.exists()) {
+        await targetDirectory.create(recursive: true);
+      }
+      final file = File('${targetDirectory.path}/$fileName');
+      if (compress) {
+        final gzBytes = await exportCompressedBackup();
+        await file.writeAsBytes(gzBytes);
+      } else {
+        final jsonStr = await dataSource.exportBackup();
+        await file.writeAsString(jsonStr);
+      }
+      return file.path;
+    }
+
+    // On Android: export directly to device public Download folder via MediaStore
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bytes = compress
+            ? await exportCompressedBackup()
+            : utf8.encode(await dataSource.exportBackup());
+        const channel = MethodChannel(AppConstants.nativeToolsChannel);
+        final path = await channel.invokeMethod<String>('exportBackupToDownloads', {
+          'fileName': fileName,
+          'bytes': Uint8List.fromList(bytes),
+        });
+        if (path != null && path.isNotEmpty) {
+          return path;
+        }
+      } catch (e) {
+        debugPrint('exportBackupToDownloads Android native error: $e');
+      }
+    }
+
+    // Desktop (Windows, Linux, macOS) or fallback
+    Directory? downloadDir;
+    try {
+      if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+        downloadDir = await getDownloadsDirectory();
+      }
+    } catch (_) {}
+    downloadDir ??= await getApplicationDocumentsDirectory();
+
+    final backupDir = Directory(downloadDir.path);
     if (!await backupDir.exists()) {
       await backupDir.create(recursive: true);
     }
 
+    final file = File('${backupDir.path}/$fileName');
     if (compress) {
       final gzBytes = await exportCompressedBackup();
-      final file = File('${backupDir.path}/smart_doc_backup_$timestamp.json.gz');
       await file.writeAsBytes(gzBytes);
       return file.path;
     } else {
       final jsonStr = await dataSource.exportBackup();
-      final file = File('${backupDir.path}/smart_doc_backup_$timestamp.json');
       await file.writeAsString(jsonStr);
       return file.path;
     }
