@@ -45,7 +45,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "v0.1.4" }
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "v0.1.5" }
           $zipName = "smart_doc_search-windows-$tag.zip"
           Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath $zipName
           Write-Host "Created $zipName successfully."
@@ -54,7 +54,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.4' }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.5' }}
           files: smart_doc_search-windows-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -93,7 +93,7 @@ jobs:
       - name: Prepare APK file
         run: |
           TAG="${{ github.ref_name }}"
-          if [ -z "$TAG" ]; then TAG="v0.1.4"; fi
+          if [ -z "$TAG" ]; then TAG="v0.1.5"; fi
           cp build/app/outputs/flutter-apk/app-release.apk "smart_doc_search-$TAG.apk"
           ls -lh "smart_doc_search-$TAG.apk"
 
@@ -101,7 +101,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.4' }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.5' }}
           files: smart_doc_search-*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

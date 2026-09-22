@@ -12,8 +12,8 @@ import 'package:smart_doc_search/data/datasources/sqlite_desktop_datasource.dart
 import 'package:smart_doc_search/data/models/document_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
 import 'package:smart_doc_search/features/analysis/ai_analysis_screen.dart';
+import 'package:smart_doc_search/features/document/document_list_screen.dart';
 import 'package:smart_doc_search/features/home/home_screen.dart';
-import 'package:smart_doc_search/features/import/import_screen.dart';
 import 'package:smart_doc_search/features/import/import_service.dart';
 import 'package:smart_doc_search/features/search/hybrid_search_service.dart';
 import 'package:smart_doc_search/features/search/search_screen.dart';
@@ -275,7 +275,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
   void _onQuickSearch(String query) {
     setState(() {
       _prefilledSearchQuery = query;
-      _currentIndex = 1; // Search tab
+      _currentIndex = 2; // Search tab (now index 2)
     });
     widget.repository.notifyDataChanged(immediate: true);
   }
@@ -286,7 +286,14 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
       HomeScreen(
         repository: widget.repository,
         ollamaClient: widget.ollamaClient,
+        importService: widget.importService,
         onNavigateTab: _onNavigateTab,
+        onQuickSearch: _onQuickSearch,
+      ),
+      DocumentListScreen(
+        repository: widget.repository,
+        ollamaClient: widget.ollamaClient,
+        importService: widget.importService,
         onQuickSearch: _onQuickSearch,
       ),
       SearchScreen(
@@ -300,12 +307,6 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
         repository: widget.repository,
         ollamaClient: widget.ollamaClient,
         onNavigateToSettings: () => _onNavigateTab(5),
-      ),
-      ImportScreen(
-        importService: widget.importService,
-        onImportSuccess: () {
-          widget.repository.notifyDataChanged(immediate: true);
-        },
       ),
       TagManagementScreen(
         repository: widget.repository,
@@ -327,7 +328,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
         selectedIndex: _currentIndex,
         onDestinationSelected: (idx) {
           setState(() {
-            if (idx != 1) _prefilledSearchQuery = null;
+            if (idx != 2) _prefilledSearchQuery = null;
             _currentIndex = idx;
           });
           widget.repository.notifyDataChanged(immediate: true);
@@ -339,6 +340,11 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
             label: '首頁',
           ),
           NavigationDestination(
+            icon: Icon(Icons.folder_outlined),
+            selectedIcon: Icon(Icons.folder),
+            label: '文獻',
+          ),
+          NavigationDestination(
             icon: Icon(Icons.search_outlined),
             selectedIcon: Icon(Icons.search),
             label: '檢索',
@@ -347,11 +353,6 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
             icon: Icon(Icons.psychology_outlined),
             selectedIcon: Icon(Icons.psychology),
             label: 'AI分析',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.cloud_upload_outlined),
-            selectedIcon: Icon(Icons.cloud_upload),
-            label: '匯入',
           ),
           NavigationDestination(
             icon: Icon(Icons.label_outline),

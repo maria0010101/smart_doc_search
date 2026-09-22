@@ -551,6 +551,7 @@ class _SearchScreenState extends State<SearchScreen> {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () async {
+          final targetPage = hit.pageNumber ?? (pageDisplay != null ? int.tryParse(pageDisplay) : null);
           await Navigator.push(
             context,
             MaterialPageRoute(
@@ -558,6 +559,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 documentId: doc.id,
                 repository: widget.repository,
                 ollamaClient: widget.ollamaClient,
+                initialPageNumber: targetPage,
               ),
             ),
           );

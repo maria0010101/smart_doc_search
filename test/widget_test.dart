@@ -34,13 +34,18 @@ void main() {
     // Verify app title & navigation destinations
     expect(find.text('個人智能文獻檢索'), findsOneWidget);
     expect(find.text('首頁'), findsOneWidget);
+    expect(find.text('文獻'), findsOneWidget);
     expect(find.text('檢索'), findsOneWidget);
     expect(find.text('AI分析'), findsOneWidget);
-    expect(find.text('匯入'), findsOneWidget);
     expect(find.text('標籤'), findsOneWidget);
     expect(find.text('設定'), findsOneWidget);
 
-    // Tap on Settings tab
+    // Tap on 文獻 tab
+    await tester.tap(find.text('文獻'));
+    await tester.pumpAndSettle();
+    expect(find.text('文獻清單'), findsOneWidget);
+
+    // Tap on 設定 tab
     await tester.tap(find.text('設定'));
     await tester.pumpAndSettle();
 

@@ -6,10 +6,13 @@ import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
 import 'package:smart_doc_search/features/document/document_detail_screen.dart';
+import 'package:smart_doc_search/features/import/import_screen.dart';
+import 'package:smart_doc_search/features/import/import_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final DocumentRepository repository;
   final OllamaClient ollamaClient;
+  final ImportService importService;
   final Function(int) onNavigateTab;
   final Function(String) onQuickSearch;
 
@@ -17,6 +20,7 @@ class HomeScreen extends StatefulWidget {
     super.key,
     required this.repository,
     required this.ollamaClient,
+    required this.importService,
     required this.onNavigateTab,
     required this.onQuickSearch,
   });
@@ -86,6 +90,21 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       });
     }
+  }
+
+  Future<void> _openImportScreen() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (ctx) => ImportScreen(
+          importService: widget.importService,
+          onImportSuccess: () {
+            widget.repository.notifyDataChanged(immediate: true);
+          },
+        ),
+      ),
+    );
+    _loadData();
   }
 
   @override
@@ -220,11 +239,25 @@ class _HomeScreenState extends State<HomeScreen> {
         // Statistics Grid
         Row(
           children: [
-            _buildStatCard('文獻總數', '${_stats['documentCount'] ?? 0}', Icons.description, Colors.blue),
+            _buildStatCard(
+              '文獻總數',
+              '${_stats['documentCount'] ?? 0}',
+              Icons.description,
+              Colors.blue,
+              onTap: () => widget.onNavigateTab(1), // Go to Document List
+              tooltip: '點擊檢視所有文獻清單與編輯',
+            ),
             const SizedBox(width: 10),
             _buildStatCard('頁面總數', '${_stats['pageCount'] ?? 0}', Icons.layers, Colors.teal),
             const SizedBox(width: 10),
-            _buildStatCard('標籤總數', '${_stats['tagCount'] ?? 0}', Icons.label, Colors.purple),
+            _buildStatCard(
+              '標籤總數',
+              '${_stats['tagCount'] ?? 0}',
+              Icons.label,
+              Colors.purple,
+              onTap: () => widget.onNavigateTab(4), // Go to Tags tab
+              tooltip: '點擊管理標籤維度',
+            ),
           ],
         ),
 
@@ -238,7 +271,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(12),
-                  onTap: () => widget.onNavigateTab(2), // AI Analysis Tab
+                  onTap: () => widget.onNavigateTab(3), // AI Analysis Tab
                   child: Padding(
                     padding: const EdgeInsets.all(14),
                     child: Column(
@@ -276,7 +309,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.4),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(12),
-                  onTap: () => widget.onNavigateTab(3), // Import Tab
+                  onTap: _openImportScreen, // Requirement 3: Import via Home button
                   child: Padding(
                     padding: const EdgeInsets.all(14),
                     child: Column(
@@ -323,7 +356,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             if (_recentDocs.isNotEmpty)
               TextButton(
-                onPressed: () => widget.onNavigateTab(1), // Go to search
+                onPressed: () => widget.onNavigateTab(1), // Go to Document list
                 child: const Text('查看全部'),
               ),
           ],
@@ -344,7 +377,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Text('尚未匯入任何文獻', style: TextStyle(color: Colors.grey)),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
-                  onPressed: () => widget.onNavigateTab(3),
+                  onPressed: _openImportScreen,
                   icon: const Icon(Icons.add),
                   label: const Text('立即匯入文獻'),
                 ),
@@ -506,26 +539,53 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardTheme.color ?? Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.1)),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, size: 22, color: color),
-            const SizedBox(height: 6),
-            Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-            const SizedBox(height: 2),
-            Text(title, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-          ],
+  Widget _buildStatCard(String title, String value, IconData icon, Color color, {VoidCallback? onTap, String? tooltip}) {
+    final content = Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardTheme.color ?? Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: onTap != null
+              ? color.withValues(alpha: 0.35)
+              : Theme.of(context).dividerColor.withValues(alpha: 0.1),
         ),
       ),
+      child: Column(
+        children: [
+          Icon(icon, size: 22, color: color),
+          const SizedBox(height: 6),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          const SizedBox(height: 2),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(title, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+              if (onTap != null) ...[
+                const SizedBox(width: 2),
+                Icon(Icons.chevron_right, size: 12, color: color),
+              ],
+            ],
+          ),
+        ],
+      ),
     );
+
+    if (onTap != null) {
+      return Expanded(
+        child: Tooltip(
+          message: tooltip ?? '點擊檢視詳情',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: onTap,
+            child: content,
+          ),
+        ),
+      );
+    }
+
+    return Expanded(child: content);
   }
 
   Widget _buildSourceTypeIcon(String type) {
