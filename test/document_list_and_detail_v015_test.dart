@@ -193,5 +193,47 @@ void main() {
       expect(find.text('AI 智能文獻摘要'), findsOneWidget);
       expect(find.text('專業醫學標籤分類 (按維度)'), findsOneWidget);
     });
+
+    testWidgets('4. DocumentDetailScreen in-doc search highlights keywords and copy buttons use icon only', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(400, 800)); // Mobile portrait screen
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DocumentDetailScreen(
+              documentId: 'doc_1',
+              repository: repo,
+              ollamaClient: ollamaClient,
+              initialPageNumber: 1,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // 1. Verify copy button uses icon only without text "複製本頁文字" (avoids overflow)
+      expect(find.text('複製本頁文字'), findsNothing);
+      expect(find.byTooltip('複製本頁文字'), findsOneWidget);
+
+      // 2. In-document search field exists and can be typed into
+      final searchInput = find.byType(TextField).first;
+      await tester.enterText(searchInput, '第 3 頁');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // 3. Search match badge should show matches found
+      expect(find.textContaining('共 1 處'), findsOneWidget);
+
+      // 4. Click next match button to jump to page 3
+      final nextMatchBtn = find.byTooltip('跳至下一個符合頁面');
+      expect(nextMatchBtn, findsOneWidget);
+      await tester.tap(nextMatchBtn);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Verify jumped to page 3
+      expect(find.text('第 3 頁 / 共 5 頁'), findsOneWidget);
+    });
   });
 }

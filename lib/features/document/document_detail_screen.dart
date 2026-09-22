@@ -490,6 +490,108 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     );
   }
 
+  /// 計算搜尋關鍵字在文字中出現的次數（不區分大小寫）
+  int _countOccurrences(String text, String query) {
+    if (query.isEmpty || text.isEmpty) return 0;
+    final lowerText = text.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    int count = 0;
+    int start = 0;
+    while (true) {
+      final index = lowerText.indexOf(lowerQuery, start);
+      if (index == -1) break;
+      count++;
+      start = index + lowerQuery.length;
+    }
+    return count;
+  }
+
+  /// 取得包含搜尋關鍵字的所有頁碼清單
+  List<int> get _pagesWithSearchMatches {
+    if (_inDocSearchQuery.isEmpty) return const [];
+    final q = _inDocSearchQuery.toLowerCase();
+    final list = <int>[];
+    for (final p in _pages) {
+      if (p.ocrText.toLowerCase().contains(q) ||
+          p.layoutBlocks.any((b) => b.text.toLowerCase().contains(q))) {
+        list.add(p.pageNumber);
+      }
+    }
+    return list;
+  }
+
+  /// 跳至下一個符合搜尋關鍵字的頁面
+  void _jumpToNextMatchPage() {
+    final matches = _pagesWithSearchMatches;
+    if (matches.isEmpty) return;
+
+    final next = matches.firstWhere(
+      (pageNum) => pageNum > _currentPageNumber,
+      orElse: () => matches.first,
+    );
+
+    setState(() {
+      _currentPageNumber = next;
+      _continuousTextView = false;
+    });
+  }
+
+  /// 跳至上一個符合搜尋關鍵字的頁面
+  void _jumpToPrevMatchPage() {
+    final matches = _pagesWithSearchMatches;
+    if (matches.isEmpty) return;
+
+    final prev = matches.lastWhere(
+      (pageNum) => pageNum < _currentPageNumber,
+      orElse: () => matches.last,
+    );
+
+    setState(() {
+      _currentPageNumber = prev;
+      _continuousTextView = false;
+    });
+  }
+
+  /// 將文字依搜尋關鍵字拆解為一般樣式與黃色高亮樣式之 TextSpan 清單
+  List<TextSpan> _buildHighlightedSpans({
+    required String text,
+    required String query,
+    required TextStyle normalStyle,
+    required TextStyle highlightStyle,
+  }) {
+    if (query.isEmpty || text.isEmpty) {
+      return [TextSpan(text: text, style: normalStyle)];
+    }
+
+    final spans = <TextSpan>[];
+    final lowerText = text.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+
+    int start = 0;
+    while (true) {
+      final index = lowerText.indexOf(lowerQuery, start);
+      if (index == -1) {
+        if (start < text.length) {
+          spans.add(TextSpan(text: text.substring(start), style: normalStyle));
+        }
+        break;
+      }
+
+      if (index > start) {
+        spans.add(TextSpan(text: text.substring(start, index), style: normalStyle));
+      }
+
+      spans.add(TextSpan(
+        text: text.substring(index, index + query.length),
+        style: highlightStyle,
+      ));
+
+      start = index + query.length;
+    }
+
+    return spans;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -590,6 +692,21 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
       orElse: () => _pages.first,
     );
 
+    // 計算文獻內搜尋符合次數與頁面
+    final matchingPageNumbers = _pagesWithSearchMatches;
+    int totalMatchesCount = 0;
+    int currentPageMatchesCount = 0;
+    if (_inDocSearchQuery.isNotEmpty) {
+      for (final p in _pages) {
+        final count = _countOccurrences(p.ocrText, _inDocSearchQuery) +
+            p.layoutBlocks.fold<int>(0, (sum, b) => sum + _countOccurrences(b.text, _inDocSearchQuery));
+        totalMatchesCount += count;
+        if (p.pageNumber == _currentPageNumber) {
+          currentPageMatchesCount = count;
+        }
+      }
+    }
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -616,17 +733,17 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                       Text(
                         '【檢索定位命中】已直接呈現第 ${widget.initialPageNumber} 頁內容（省去翻頁尋找步驟）',
                         style: TextStyle(
-                          fontSize: 13,
                           fontWeight: FontWeight.bold,
+                          fontSize: 13,
                           color: isDark ? Colors.teal.shade200 : Colors.teal.shade900,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '您可點擊下方頁碼切換其他頁面，或切換為「連續全文」進行跨頁檢視。',
+                        '本文件由檢索結果開啟，系統已自動為您切換至目標段落所在頁數。',
                         style: TextStyle(
-                          fontSize: 11,
-                          color: isDark ? Colors.teal.shade300 : Colors.teal.shade800,
+                          fontSize: 11.5,
+                          color: isDark ? Colors.teal.shade300 : Colors.teal.shade700,
                         ),
                       ),
                     ],
@@ -638,73 +755,80 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
           const SizedBox(height: 12),
         ],
 
-        // 2. Navigation & View Switcher Bar
+        // 2. Page Switcher & Control Header Bar
         Card(
-          elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          elevation: 1,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            child: Row(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 6,
               children: [
-                // Previous page button
-                IconButton(
-                  icon: const Icon(Icons.chevron_left),
-                  tooltip: '上一頁',
-                  onPressed: (!_continuousTextView && _currentPageNumber > 1)
-                      ? () => setState(() => _currentPageNumber--)
-                      : null,
-                ),
-
-                // Current Page Badge / Selector
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.35),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _continuousTextView
-                        ? '全篇連續全文 (共 ${_pages.length} 頁)'
-                        : '第 $_currentPageNumber 頁 / 共 ${_pages.length} 頁',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: Theme.of(context).colorScheme.primary,
+                // Page switcher (prev, page count, next)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.chevron_left, size: 22),
+                      tooltip: '上一頁',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: (!_continuousTextView && _currentPageNumber > 1)
+                          ? () => setState(() => _currentPageNumber--)
+                          : null,
                     ),
-                  ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        _continuousTextView ? '全篇連續全文 (共 ${_pages.length} 頁)' : '第 $_currentPageNumber 頁 / 共 ${_pages.length} 頁',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right, size: 22),
+                      tooltip: '下一頁',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: (!_continuousTextView && _currentPageNumber < _pages.length)
+                          ? () => setState(() => _currentPageNumber++)
+                          : null,
+                    ),
+                  ],
                 ),
-
-                // Next page button
-                IconButton(
-                  icon: const Icon(Icons.chevron_right),
-                  tooltip: '下一頁',
-                  onPressed: (!_continuousTextView && _currentPageNumber < _pages.length)
-                      ? () => setState(() => _currentPageNumber++)
-                      : null,
-                ),
-
-                const Spacer(),
-
-                // Toggle Continuous Text View
-                ChoiceChip(
-                  visualDensity: VisualDensity.compact,
-                  avatar: Icon(_continuousTextView ? Icons.view_headline : Icons.auto_stories, size: 14),
-                  label: Text(_continuousTextView ? '切換分頁' : '連續全文', style: const TextStyle(fontSize: 11)),
-                  selected: _continuousTextView,
-                  onSelected: (val) => setState(() => _continuousTextView = val),
-                ),
-                const SizedBox(width: 8),
-
-                // Open external / fullscreen
-                IconButton(
-                  icon: const Icon(Icons.fullscreen, size: 20),
-                  tooltip: '全螢幕閱讀器',
-                  onPressed: () => _showFullscreenPageViewer(_currentPageNumber - 1),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.open_in_new, size: 20),
-                  tooltip: '以外部程式開啟原檔',
-                  onPressed: () => _openOriginalFile(_currentPageNumber - 1),
+                // Actions (continuous view chip, fullscreen, open external)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ChoiceChip(
+                      visualDensity: VisualDensity.compact,
+                      avatar: Icon(_continuousTextView ? Icons.view_headline : Icons.auto_stories, size: 14),
+                      label: Text(_continuousTextView ? '切換分頁' : '連續全文', style: const TextStyle(fontSize: 11)),
+                      selected: _continuousTextView,
+                      onSelected: (val) => setState(() => _continuousTextView = val),
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      icon: const Icon(Icons.fullscreen, size: 20),
+                      tooltip: '全螢幕閱讀器',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _showFullscreenPageViewer(_currentPageNumber - 1),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.open_in_new, size: 20),
+                      tooltip: '以外部程式開啟原檔',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _openOriginalFile(_currentPageNumber - 1),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -724,19 +848,30 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                 final pageNum = _pages[idx].pageNumber;
                 final isCurrent = pageNum == _currentPageNumber;
                 final isSearchHit = pageNum == widget.initialPageNumber;
+                final hasInDocMatch = matchingPageNumbers.contains(pageNum);
 
                 return Padding(
                   padding: const EdgeInsets.only(right: 6),
                   child: FilterChip(
                     visualDensity: VisualDensity.compact,
                     selected: isCurrent,
-                    avatar: isSearchHit ? const Icon(Icons.bookmark, size: 13, color: Colors.teal) : null,
+                    avatar: isSearchHit
+                        ? const Icon(Icons.bookmark, size: 13, color: Colors.teal)
+                        : (hasInDocMatch
+                            ? const Icon(Icons.search, size: 13, color: Colors.amber)
+                            : null),
                     label: Text(
-                      isSearchHit ? '第 $pageNum 頁 ★' : '第 $pageNum 頁',
+                      isSearchHit
+                          ? '第 $pageNum 頁 ★'
+                          : (hasInDocMatch ? '第 $pageNum 頁 🔍' : '第 $pageNum 頁'),
                       style: TextStyle(
                         fontSize: 11,
-                        fontWeight: isCurrent || isSearchHit ? FontWeight.bold : FontWeight.normal,
-                        color: isCurrent ? null : (isSearchHit ? Colors.teal : null),
+                        fontWeight: isCurrent || isSearchHit || hasInDocMatch ? FontWeight.bold : FontWeight.normal,
+                        color: isCurrent
+                            ? null
+                            : (isSearchHit
+                                ? Colors.teal
+                                : (hasInDocMatch ? (isDark ? Colors.amber.shade300 : Colors.amber.shade900) : null)),
                       ),
                     ),
                     selectedColor: Theme.of(context).colorScheme.primaryContainer,
@@ -751,29 +886,141 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
           const SizedBox(height: 12),
         ],
 
-        // 4. In-document search box
+        // 4. In-document search box & controls
         Card(
           elevation: 1,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: TextField(
-              controller: _inDocSearchCtrl,
-              decoration: InputDecoration(
-                hintText: _continuousTextView ? '在連續全文中搜尋關鍵字...' : '在第 $_currentPageNumber 頁中搜尋關鍵字...',
-                prefixIcon: const Icon(Icons.search, size: 18),
-                suffixIcon: _inDocSearchQuery.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear, size: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.search, size: 20, color: Colors.blueGrey),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _inDocSearchCtrl,
+                        decoration: InputDecoration(
+                          hintText: _continuousTextView ? '在全文中搜尋關鍵字...' : '在第 $_currentPageNumber 頁或全篇搜尋...',
+                          hintStyle: const TextStyle(fontSize: 13),
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                        textInputAction: TextInputAction.search,
+                        onSubmitted: (_) => _jumpToNextMatchPage(),
+                        onChanged: (val) => setState(() => _inDocSearchQuery = val.trim()),
+                      ),
+                    ),
+                    if (_inDocSearchQuery.isNotEmpty) ...[
+                      // Match count badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: totalMatchesCount > 0
+                              ? (isDark ? Colors.teal.shade900 : Colors.teal.shade50)
+                              : (isDark ? Colors.red.shade900.withValues(alpha: 0.3) : Colors.red.shade50),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: totalMatchesCount > 0 ? Colors.teal : Colors.red.shade300,
+                            width: 0.8,
+                          ),
+                        ),
+                        child: Text(
+                          totalMatchesCount > 0
+                              ? (_continuousTextView
+                                  ? '共 $totalMatchesCount 處'
+                                  : '本頁 $currentPageMatchesCount / 共 $totalMatchesCount 處')
+                              : '查無符合',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: totalMatchesCount > 0
+                                ? (isDark ? Colors.teal.shade200 : Colors.teal.shade800)
+                                : Colors.red,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      // Prev match button
+                      IconButton(
+                        icon: const Icon(Icons.keyboard_arrow_up, size: 20),
+                        tooltip: '跳至上一個符合頁面',
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                        onPressed: totalMatchesCount > 0 ? _jumpToPrevMatchPage : null,
+                      ),
+                      // Next match button
+                      IconButton(
+                        icon: const Icon(Icons.keyboard_arrow_down, size: 20),
+                        tooltip: '跳至下一個符合頁面',
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                        onPressed: totalMatchesCount > 0 ? _jumpToNextMatchPage : null,
+                      ),
+                      // Clear button
+                      IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        tooltip: '清除搜尋',
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                         onPressed: () {
                           _inDocSearchCtrl.clear();
                           setState(() => _inDocSearchQuery = '');
                         },
-                      )
-                    : null,
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(vertical: 10),
-              ),
-              onChanged: (val) => setState(() => _inDocSearchQuery = val.trim()),
+                      ),
+                    ],
+                  ],
+                ),
+                // Quick jump to matching pages chips (in single page mode)
+                if (_inDocSearchQuery.isNotEmpty && matchingPageNumbers.isNotEmpty && !_continuousTextView) ...[
+                  const Divider(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4, top: 2),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        const Text(
+                          '符合頁面：',
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blueGrey),
+                        ),
+                        ...matchingPageNumbers.map((pNum) {
+                          final isCurrent = pNum == _currentPageNumber;
+                          final matchCountOnPage = _countOccurrences(_pages.firstWhere((p) => p.pageNumber == pNum).ocrText, _inDocSearchQuery);
+                          return InkWell(
+                            onTap: () => setState(() => _currentPageNumber = pNum),
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: isCurrent
+                                    ? Theme.of(context).colorScheme.primary
+                                    : (isDark ? Colors.blueGrey.shade800 : Colors.blueGrey.shade100),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                matchCountOnPage > 0 ? '第 $pNum 頁 ($matchCountOnPage)' : '第 $pNum 頁',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: isCurrent ? Colors.white : (isDark ? Colors.white70 : Colors.black87),
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ),
@@ -846,21 +1093,20 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Icon(Icons.text_fields, color: isDark ? Colors.indigo.shade300 : Colors.indigo, size: 20),
-                        const SizedBox(width: 8),
-                        Text(
-                          '第 ${page.pageNumber} 頁全文內容 (OCR / 原生文字)',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                        ),
-                      ],
+                    Icon(Icons.text_fields, color: isDark ? Colors.indigo.shade300 : Colors.indigo, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '第 ${page.pageNumber} 頁全文內容 (OCR / 原生文字)',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.copy, size: 15),
-                      label: const Text('複製本頁文字', style: TextStyle(fontSize: 12)),
+                    IconButton(
+                      icon: const Icon(Icons.copy, size: 18),
+                      tooltip: '複製本頁文字',
+                      visualDensity: VisualDensity.compact,
                       onPressed: () => _copyCurrentPageText(page),
                     ),
                   ],
@@ -878,13 +1124,26 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                     ),
                   ),
                   child: SingleChildScrollView(
-                    child: SelectableText(
-                      page.ocrText.isEmpty ? '本頁暫無文字內容' : page.ocrText,
-                      style: TextStyle(
-                        fontSize: 13.5,
-                        height: 1.6,
-                        fontFamily: 'monospace',
-                        color: isDark ? const Color(0xFFE2E8F0) : null,
+                    child: SelectableText.rich(
+                      TextSpan(
+                        children: _buildHighlightedSpans(
+                          text: page.ocrText.isEmpty ? '本頁暫無文字內容' : page.ocrText,
+                          query: _inDocSearchQuery,
+                          normalStyle: TextStyle(
+                            fontSize: 13.5,
+                            height: 1.6,
+                            fontFamily: 'monospace',
+                            color: isDark ? const Color(0xFFE2E8F0) : null,
+                          ),
+                          highlightStyle: TextStyle(
+                            fontSize: 13.5,
+                            height: 1.6,
+                            fontFamily: 'monospace',
+                            backgroundColor: Colors.amberAccent.shade200,
+                            color: Colors.black87,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -935,9 +1194,20 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                           ),
                           const SizedBox(width: 8),
                           Expanded(
-                            child: Text(
-                              block.text,
-                              style: const TextStyle(fontSize: 12),
+                            child: SelectableText.rich(
+                              TextSpan(
+                                children: _buildHighlightedSpans(
+                                  text: block.text,
+                                  query: _inDocSearchQuery,
+                                  normalStyle: const TextStyle(fontSize: 12),
+                                  highlightStyle: TextStyle(
+                                    fontSize: 12,
+                                    backgroundColor: Colors.amberAccent.shade200,
+                                    color: Colors.black87,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ],
@@ -964,15 +1234,18 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  '全篇連續全文 (全部頁面串接)',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                const Expanded(
+                  child: Text(
+                    '全篇連續全文 (全部頁面串接)',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                TextButton.icon(
-                  icon: const Icon(Icons.copy_all, size: 16),
-                  label: const Text('複製全篇全文', style: TextStyle(fontSize: 12)),
+                IconButton(
+                  icon: const Icon(Icons.copy_all, size: 20),
+                  tooltip: '複製全篇全文',
+                  visualDensity: VisualDensity.compact,
                   onPressed: _copyAllOcrText,
                 ),
               ],
@@ -1012,21 +1285,37 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                             style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                           ),
                         ),
-                        TextButton.icon(
-                          icon: const Icon(Icons.copy, size: 14),
-                          label: const Text('複製本頁', style: TextStyle(fontSize: 11)),
+                        IconButton(
+                          icon: const Icon(Icons.copy, size: 16),
+                          tooltip: '複製本頁文字',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
                           onPressed: () => _copyCurrentPageText(p),
                         ),
                       ],
                     ),
                     const SizedBox(height: 8),
-                    SelectableText(
-                      p.ocrText.isEmpty ? '本頁無文字' : p.ocrText,
-                      style: TextStyle(
-                        fontSize: 13,
-                        height: 1.55,
-                        fontFamily: 'monospace',
-                        color: isDark ? const Color(0xFFE2E8F0) : null,
+                    SelectableText.rich(
+                      TextSpan(
+                        children: _buildHighlightedSpans(
+                          text: p.ocrText.isEmpty ? '本頁無文字' : p.ocrText,
+                          query: _inDocSearchQuery,
+                          normalStyle: TextStyle(
+                            fontSize: 13,
+                            height: 1.55,
+                            fontFamily: 'monospace',
+                            color: isDark ? const Color(0xFFE2E8F0) : null,
+                          ),
+                          highlightStyle: TextStyle(
+                            fontSize: 13,
+                            height: 1.55,
+                            fontFamily: 'monospace',
+                            backgroundColor: Colors.amberAccent.shade200,
+                            color: Colors.black87,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     ),
                   ],
