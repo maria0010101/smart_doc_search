@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
+import 'package:smart_doc_search/core/utils/tag_page_calibrator.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 
@@ -320,70 +321,73 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
 
     // Load all pages for full-text search and page matching
     final pagesRows = await db.query('pages', orderBy: 'page_number ASC');
-    final Map<String, List<Map<String, dynamic>>> docPages = {};
+    final Map<String, List<PageItem>> docPages = {};
     for (final r in pagesRows) {
       final docId = r['document_id'] as String;
-      docPages.putIfAbsent(docId, () => []).add(r);
+      docPages.putIfAbsent(docId, () => []).add(_mapRowToPage(r));
     }
 
     // 2. Score candidates
     final scored = <DocumentHit>[];
     for (final doc in candidates) {
       final pages = docPages[doc.id] ?? [];
-      final pageTexts = pages.map((p) => (p['ocr_text'] ?? '') as String).join(' ');
+      final pageTexts = pages.map((p) => p.ocrText).join(' ');
       final fullText = '${doc.title} ${doc.summary} $pageTexts';
 
       double kwScore = 0.0;
       String? snippet;
-      int? matchedPageNumber;
 
       if (keywords.isNotEmpty) {
-        // 1. Check individual pages first for accurate page attribution
         for (final p in pages) {
-          final pText = (p['ocr_text'] ?? '') as String;
-          final pNum = (p['page_number'] as num?)?.toInt() ?? 1;
           for (final kw in keywords) {
-            final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(pText).length;
+            final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(p.ocrText).length;
             if (count > 0) {
               kwScore += count * 1.5 / (count + 1.0);
-              if (snippet == null) {
-                final idx = pText.toLowerCase().indexOf(kw.toLowerCase());
-                final start = max(0, idx - 50);
-                final end = min(pText.length, idx + kw.length + 50);
-                snippet = '...${pText.substring(start, end).trim()}...';
-                matchedPageNumber = pNum;
-              }
             }
           }
         }
-
-        // 2. Fallback check across title and summary
-        if (snippet == null) {
-          for (final kw in keywords) {
-            final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(fullText).length;
-            if (count > 0) {
-              kwScore += count * 1.5 / (count + 1.0);
-              if (snippet == null) {
-                final idx = fullText.toLowerCase().indexOf(kw.toLowerCase());
-                final start = max(0, idx - 50);
-                final end = min(fullText.length, idx + kw.length + 50);
-                snippet = '...${fullText.substring(start, end).trim()}...';
-                matchedPageNumber = 1;
-              }
-            }
+        for (final kw in keywords) {
+          final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(fullText).length;
+          if (count > 0 && kwScore == 0.0) {
+            kwScore += count * 1.5 / (count + 1.0);
           }
         }
       }
 
-      // If page number not determined from keywords, check summary citations or page count
-      if (matchedPageNumber == null) {
-        final pageRegex = RegExp(r'(\(|【|\[)(P\.?\s*([0-9]+)|第\s*([0-9]+)\s*頁)(\)|】|\])', caseSensitive: false);
-        final match = pageRegex.firstMatch(doc.summary);
-        if (match != null) {
-          final pageStr = match.group(3) ?? match.group(4);
-          matchedPageNumber = int.tryParse(pageStr ?? '');
-        } else if (doc.pageCount == 1) {
-          matchedPageNumber = 1;
+      // 使用 TagPageCalibrator 智慧解析實質命中頁碼（優先取用標籤正確頁數，嚴格排除目錄頁誤導）
+      final matchedPageNumber = TagPageCalibrator.resolveSubstantivePageForSearchHit(
+        searchKeywords: keywords,
+        searchTags: tags,
+        docTags: doc.tags,
+        docPages: pages,
+        docSummary: doc.summary,
+      );
+
+      // 提取符合該實質命中頁面之引註片段
+      if (keywords.isNotEmpty && pages.isNotEmpty) {
+        final targetPage = pages.firstWhere(
+          (p) => p.pageNumber == matchedPageNumber,
+          orElse: () => pages.first,
+        );
+        for (final kw in keywords) {
+          final idx = targetPage.ocrText.toLowerCase().indexOf(kw.toLowerCase());
+          if (idx != -1) {
+            final start = max(0, idx - 50);
+            final end = min(targetPage.ocrText.length, idx + kw.length + 50);
+            snippet = '...${targetPage.ocrText.substring(start, end).trim()}...';
+            break;
+          }
+        }
+      }
+      if (snippet == null && keywords.isNotEmpty) {
+        for (final kw in keywords) {
+          final idx = fullText.toLowerCase().indexOf(kw.toLowerCase());
+          if (idx != -1) {
+            final start = max(0, idx - 50);
+            final end = min(fullText.length, idx + kw.length + 50);
+            snippet = '...${fullText.substring(start, end).trim()}...';
+            break;
+          }
         }
       }
 
@@ -466,6 +470,34 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
     return page.id;
   }
 
+  PageItem _mapRowToPage(Map<String, dynamic> r) {
+    List<LayoutBlock> blocks = [];
+    if (r['layout_blocks_json'] != null) {
+      try {
+        final List list = json.decode(r['layout_blocks_json'] as String);
+        blocks = list.map((b) => LayoutBlock.fromMap(Map<String, dynamic>.from(b))).toList();
+      } catch (_) {}
+    }
+
+    List<double>? emb;
+    if (r['embedding_json'] != null) {
+      try {
+        final List list = json.decode(r['embedding_json'] as String);
+        emb = list.map((e) => (e as num).toDouble()).toList();
+      } catch (_) {}
+    }
+
+    return PageItem(
+      id: r['id'] as String,
+      documentId: r['document_id'] as String,
+      pageNumber: (r['page_number'] as num?)?.toInt() ?? 1,
+      imagePath: (r['image_path'] ?? '') as String,
+      ocrText: (r['ocr_text'] ?? '') as String,
+      layoutBlocks: blocks,
+      embedding: emb,
+    );
+  }
+
   @override
   Future<List<PageItem>> getPages(String documentId) async {
     final db = await database;
@@ -476,33 +508,7 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
       orderBy: 'page_number ASC',
     );
 
-    return rows.map((r) {
-      List<LayoutBlock> blocks = [];
-      if (r['layout_blocks_json'] != null) {
-        try {
-          final List list = json.decode(r['layout_blocks_json'] as String);
-          blocks = list.map((b) => LayoutBlock.fromMap(Map<String, dynamic>.from(b))).toList();
-        } catch (_) {}
-      }
-
-      List<double>? emb;
-      if (r['embedding_json'] != null) {
-        try {
-          final List list = json.decode(r['embedding_json'] as String);
-          emb = list.map((e) => (e as num).toDouble()).toList();
-        } catch (_) {}
-      }
-
-      return PageItem(
-        id: r['id'] as String,
-        documentId: r['document_id'] as String,
-        pageNumber: (r['page_number'] as num?)?.toInt() ?? 1,
-        imagePath: (r['image_path'] ?? '') as String,
-        ocrText: (r['ocr_text'] ?? '') as String,
-        layoutBlocks: blocks,
-        embedding: emb,
-      );
-    }).toList();
+    return rows.map(_mapRowToPage).toList();
   }
 
   @override

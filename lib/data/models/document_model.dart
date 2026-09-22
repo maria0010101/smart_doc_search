@@ -116,6 +116,8 @@ class TagItem {
   final String source; // 'user' | 'ai_text' | 'ai_image' | 'fusion'
   final bool verified;
   final String? codeSystem; // e.g. 'ICD-10-CM', 'ICD-10-PCS', 'SNOMED-CT'
+  final int? pageNumber; // 標籤於原始文獻中實質探討/提取之正確頁碼 (1-indexed)
+  final List<int>? pages; // 標籤於原始文獻中涵蓋之所有頁碼清單
 
   TagItem({
     required this.id,
@@ -125,6 +127,8 @@ class TagItem {
     this.source = 'ai_text',
     this.verified = false,
     this.codeSystem,
+    this.pageNumber,
+    this.pages,
   });
 
   TagItem copyWith({
@@ -135,6 +139,8 @@ class TagItem {
     String? source,
     bool? verified,
     String? codeSystem,
+    int? pageNumber,
+    List<int>? pages,
   }) {
     return TagItem(
       id: id ?? this.id,
@@ -144,6 +150,8 @@ class TagItem {
       source: source ?? this.source,
       verified: verified ?? this.verified,
       codeSystem: codeSystem ?? this.codeSystem,
+      pageNumber: pageNumber ?? this.pageNumber,
+      pages: pages ?? this.pages,
     );
   }
 
@@ -156,6 +164,8 @@ class TagItem {
       'source': source,
       'verified': verified,
       'code_system': codeSystem,
+      'page_number': pageNumber,
+      'pages': pages,
     };
   }
 
@@ -170,6 +180,15 @@ class TagItem {
       source: map['source'] ?? 'ai_text',
       verified: map['verified'] == true,
       codeSystem: map['code_system'] ?? map['codeSystem'],
+      pageNumber: (map['page_number'] ?? map['pageNumber'] ?? map['page']) != null
+          ? int.tryParse((map['page_number'] ?? map['pageNumber'] ?? map['page']).toString())
+          : null,
+      pages: (map['pages'] is List)
+          ? (map['pages'] as List)
+              .map((e) => int.tryParse(e.toString()))
+              .whereType<int>()
+              .toList()
+          : null,
     );
   }
 

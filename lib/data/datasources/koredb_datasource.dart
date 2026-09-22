@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
+import 'package:smart_doc_search/core/utils/tag_page_calibrator.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 
 abstract class KoreDbDataSource {
@@ -220,53 +221,58 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
 
       double kwScore = 0.0;
       String? highlight;
-      int? matchedPageNumber;
 
       if (keywords.isNotEmpty) {
-        // 1. Check individual pages first for accurate page attribution
         for (final page in docPages) {
           for (final kw in keywords) {
             final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(page.ocrText).length;
             if (count > 0) {
               kwScore += count * 1.5 / (count + 1.0);
-              if (highlight == null) {
-                final idx = page.ocrText.toLowerCase().indexOf(kw.toLowerCase());
-                final start = max(0, idx - 50);
-                final end = min(page.ocrText.length, idx + kw.length + 50);
-                highlight = '...${page.ocrText.substring(start, end).trim()}...';
-                matchedPageNumber = page.pageNumber;
-              }
             }
           }
         }
-
-        // 2. Fallback check across title and summary
-        if (highlight == null) {
-          for (final kw in keywords) {
-            final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(fullText).length;
-            if (count > 0) {
-              kwScore += count * 1.5 / (count + 1.0);
-              if (highlight == null) {
-                final idx = fullText.toLowerCase().indexOf(kw.toLowerCase());
-                final start = max(0, idx - 50);
-                final end = min(fullText.length, idx + kw.length + 50);
-                highlight = '...${fullText.substring(start, end).trim()}...';
-                matchedPageNumber = 1;
-              }
-            }
+        for (final kw in keywords) {
+          final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(fullText).length;
+          if (count > 0 && kwScore == 0.0) {
+            kwScore += count * 1.5 / (count + 1.0);
           }
         }
       }
 
-      // If page number not determined from keywords, check summary citations or page count
-      if (matchedPageNumber == null) {
-        final pageRegex = RegExp(r'(\(|【|\[)(P\.?\s*([0-9]+)|第\s*([0-9]+)\s*頁)(\)|】|\])', caseSensitive: false);
-        final match = pageRegex.firstMatch(doc.summary);
-        if (match != null) {
-          final pageStr = match.group(3) ?? match.group(4);
-          matchedPageNumber = int.tryParse(pageStr ?? '');
-        } else if (doc.pageCount == 1) {
-          matchedPageNumber = 1;
+      // 使用 TagPageCalibrator 智慧解析實質命中頁碼（優先取用標籤正確頁數，嚴格排除目錄頁誤導）
+      final matchedPageNumber = TagPageCalibrator.resolveSubstantivePageForSearchHit(
+        searchKeywords: keywords,
+        searchTags: tags,
+        docTags: doc.tags,
+        docPages: docPages,
+        docSummary: doc.summary,
+      );
+
+      // 提取符合該實質命中頁面之引註片段
+      if (keywords.isNotEmpty && docPages.isNotEmpty) {
+        final targetPage = docPages.firstWhere(
+          (p) => p.pageNumber == matchedPageNumber,
+          orElse: () => docPages.first,
+        );
+        for (final kw in keywords) {
+          final idx = targetPage.ocrText.toLowerCase().indexOf(kw.toLowerCase());
+          if (idx != -1) {
+            final start = max(0, idx - 50);
+            final end = min(targetPage.ocrText.length, idx + kw.length + 50);
+            highlight = '...${targetPage.ocrText.substring(start, end).trim()}...';
+            break;
+          }
+        }
+      }
+      if (highlight == null && keywords.isNotEmpty) {
+        for (final kw in keywords) {
+          final idx = fullText.toLowerCase().indexOf(kw.toLowerCase());
+          if (idx != -1) {
+            final start = max(0, idx - 50);
+            final end = min(fullText.length, idx + kw.length + 50);
+            highlight = '...${fullText.substring(start, end).trim()}...';
+            break;
+          }
         }
       }
 

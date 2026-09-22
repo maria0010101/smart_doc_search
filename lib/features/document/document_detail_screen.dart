@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
+import 'package:smart_doc_search/core/utils/tag_page_calibrator.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
@@ -251,6 +252,23 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     await widget.repository.updateDocument(updated);
     setState(() => _document = updated);
     widget.onDocumentUpdated?.call();
+
+    if (mounted) {
+      final newStatus = !tag.verified;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('標籤【${tag.name}】已標記為${newStatus ? "已審核" : "待審核"}'),
+          duration: const Duration(seconds: 2),
+          action: tag.pageNumber != null
+              ? SnackBarAction(
+                  label: '前往第 ${tag.pageNumber} 頁',
+                  onPressed: () => _jumpToPage(tag.pageNumber!),
+                )
+              : null,
+        ),
+      );
+    }
   }
 
   Future<void> _deleteTag(TagItem tag) async {
@@ -268,50 +286,67 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
   Future<void> _showAddTagDialog() async {
     String tagName = '';
     String category = '醫學術語';
+    int tagPage = _currentPageNumber;
 
-    await showDialog(
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
               title: const Text('新增結構化標籤'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      labelText: '標籤名稱',
-                      hintText: '例：第2型糖尿病 / E11 / 胰島素阻抗',
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: '標籤名稱',
+                        hintText: '例：第2型糖尿病 / E11 / 胰島素阻抗',
+                      ),
+                      onChanged: (val) => tagName = val.trim(),
                     ),
-                    onChanged: (val) => tagName = val.trim(),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: category,
-                    decoration: const InputDecoration(labelText: '標籤維度'),
-                    items: [
-                      '醫學術語',
-                      '疾病/症狀',
-                      '疾病分類編碼',
-                      '主題',
-                      '領域',
-                      '方法',
-                      '對象',
-                      '結論',
-                      '文檔類型',
-                      '年份',
-                      '作者/機構',
-                    ].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                    onChanged: (val) {
-                      if (val != null) setDialogState(() => category = val);
-                    },
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: category,
+                      decoration: const InputDecoration(labelText: '標籤維度'),
+                      items: [
+                        '醫學術語',
+                        '疾病/症狀',
+                        '疾病分類編碼',
+                        '主題',
+                        '領域',
+                        '方法',
+                        '對象',
+                        '結論',
+                        '文檔類型',
+                        '年份',
+                        '作者/機構',
+                      ].map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                      onChanged: (val) {
+                        if (val != null) setDialogState(() => category = val);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      initialValue: tagPage > 0 ? tagPage.toString() : '1',
+                      decoration: const InputDecoration(
+                        labelText: '關聯文獻頁碼',
+                        hintText: '例：1、5、12',
+                        helperText: '標記此標籤在文獻中所屬之頁碼',
+                      ),
+                      keyboardType: TextInputType.number,
+                      onChanged: (val) {
+                        final p = int.tryParse(val.trim());
+                        if (p != null && p > 0) tagPage = p;
+                      },
+                    ),
+                  ],
+                ),
               ),
               actions: [
-                TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+                TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
                 ElevatedButton(
                   onPressed: () {
                     if (tagName.isNotEmpty) {
@@ -327,7 +362,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
       },
     );
 
-    if (tagName.isNotEmpty && _document != null) {
+    if (confirmed == true && tagName.isNotEmpty && _document != null) {
       final newTag = TagItem(
         id: const Uuid().v4(),
         name: tagName,
@@ -335,6 +370,8 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
         confidence: 1.0,
         source: 'user',
         verified: true,
+        pageNumber: tagPage > 0 ? tagPage : _currentPageNumber,
+        pages: tagPage > 0 ? [tagPage] : [_currentPageNumber],
       );
 
       final updatedTags = [..._document!.tags, newTag];
@@ -381,8 +418,15 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
       }
 
       if (analysis.tags.isNotEmpty || analysis.summary.isNotEmpty) {
+        // 透過 TagPageCalibrator 智慧校準標籤實質頁碼（嚴格排除目錄頁誤導）
+        final calibratedTags = TagPageCalibrator.calibrateTags(
+          tags: analysis.tags,
+          pages: _pages,
+          title: _document!.title,
+        );
+
         final userTags = _document!.tags.where((t) => t.source == 'user').toList();
-        final combinedTags = [...userTags, ...analysis.tags];
+        final combinedTags = [...userTags, ...calibratedTags];
 
         final updatedMetadata = Map<String, dynamic>.from(_document!.metadata);
         if (analysis.chineseSummary.isNotEmpty) {
@@ -404,7 +448,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('已透過 ${widget.ollamaClient.providerDisplayName} 成功更新醫學標籤與摘要！'),
+              content: Text('已透過 ${widget.ollamaClient.providerDisplayName} 成功更新醫學標籤（含實質頁碼校準）與摘要！'),
               backgroundColor: Colors.teal,
             ),
           );
@@ -1758,6 +1802,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                             spacing: 8,
                             runSpacing: 6,
                             children: tags.map((t) {
+                              final hasPage = t.pageNumber != null && t.pageNumber! > 0;
                               return InputChip(
                                 label: ConstrainedBox(
                                   constraints: BoxConstraints(maxWidth: maxLabelWidth),
@@ -1782,6 +1827,35 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                                           ),
                                         ),
                                       ],
+                                      if (hasPage) ...[
+                                        GestureDetector(
+                                          onTap: () => _jumpToPage(t.pageNumber!),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                            margin: const EdgeInsets.only(right: 5),
+                                            decoration: BoxDecoration(
+                                              color: Colors.teal.withValues(alpha: 0.18),
+                                              borderRadius: BorderRadius.circular(4),
+                                              border: Border.all(color: Colors.teal.withValues(alpha: 0.5), width: 0.8),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Icon(Icons.menu_book, size: 10, color: Colors.teal),
+                                                const SizedBox(width: 2.5),
+                                                Text(
+                                                  'P.${t.pageNumber}',
+                                                  style: const TextStyle(
+                                                    fontSize: 9.5,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.teal,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                       Flexible(
                                         child: Text(
                                           '${t.name} (${(t.confidence * 100).toInt()}%)',
@@ -1801,7 +1875,9 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                                 selected: t.verified,
                                 onSelected: (_) => _toggleTagVerified(t),
                                 onDeleted: () => _deleteTag(t),
-                                tooltip: '代碼系統: ${t.codeSystem ?? "無"} • 點擊審核狀態（${t.verified ? '已審核' : '待審核'}）• 來源: ${t.source}',
+                                tooltip: '代碼系統: ${t.codeSystem ?? "無"}'
+                                    '${hasPage ? " • 所屬實質頁數: 第 ${t.pageNumber} 頁 (點擊 P.${t.pageNumber} 徽章直接跳轉)" : ""}'
+                                    ' • 點擊切換審核狀態（${t.verified ? '已審核' : '待審核'}）• 來源: ${t.source}',
                               );
                             }).toList(),
                           );

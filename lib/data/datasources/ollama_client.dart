@@ -732,6 +732,10 @@ class OllamaClient {
     • 【臨床注意事項與併發症考量】(P.X) ...
 - 【關鍵規定 - 來源頁碼】：每一條列項目必須附帶原文來源頁碼（如 (P.1)、(P.2) 或 (P.1-P.2) 等），方便使用者精準回溯原文！
 - 若原文為英文或外文，chinese_summary 必須提供詳盡的條列式繁體中文摘要說明並附帶來源頁碼。
+
+【重大要求 3 - 標籤記錄原始文獻實質頁數，嚴格排除目錄頁】：
+- 標籤陣列中的每一個標籤物件，必須同時紀錄 "page_number"（整數，如 3 或 12），表示該標籤在原文中【主要實質探討或定義】的頁碼。
+- ⚠️【極重要 - 排除目錄頁與封面頁】：絕不能僅因該詞出現在第 1 頁目錄（Table of Contents）、標題頁或封面頁就標註為第 1 頁！必須紀錄實際章節內容展開討論的真實頁數！
 $customPromptBlock
 請嚴格輸出合法的 JSON 格式，不要輸出任何額外文字：
 {
@@ -742,8 +746,8 @@ $customPromptBlock
   "diseases_and_symptoms": ["疾病或症狀名稱1", "疾病或症狀名稱2"],
   "classification_codes": ["ICD-10/11編碼", "相關分類代碼"],
   "tags": [
-    {"name": "標籤名稱", "category": "疾病分類編碼", "code_system": "ICD-10-CM", "confidence": 0.95},
-    {"name": "標籤名稱", "category": "疾病/症狀 或 醫學術語 或 主題", "confidence": 0.95}
+    {"name": "標籤名稱", "category": "疾病分類編碼", "code_system": "ICD-10-CM", "confidence": 0.95, "page_number": 3},
+    {"name": "標籤名稱", "category": "疾病/症狀 或 醫學術語 或 主題", "confidence": 0.95, "page_number": 5}
   ]
 }
 
@@ -779,6 +783,10 @@ $truncatedText
     • 【建議措施與實施方針】(P.X) ...
 - 【關鍵規定 - 來源頁碼】：每一條列項目必須附帶原文來源頁碼（如 (P.1)、(P.2) 等），方便使用者精準回溯原文！
 - 若原文為英文或外文，chinese_summary 必須提供詳盡的條列式繁體中文摘要說明並附帶來源頁碼。
+
+【重大要求 3 - 標籤記錄原始文獻實質頁數，嚴格排除目錄頁】：
+- 標籤陣列中的每一個標籤物件，必須同時紀錄 "page_number"（整數，如 2 或 6），表示該標籤在原文中主要實質探討的頁碼。
+- ⚠️【極重要 - 排除目錄頁與封面頁】：絕不能僅因該詞出現在第 1 頁目錄或封面頁就標註為第 1 頁！
 $customPromptBlock
 請嚴格輸出合法的 JSON 格式，不要輸出任何額外文字：
 {
@@ -786,7 +794,7 @@ $customPromptBlock
   "summary": "• 【項目一】(P.1) 內文重點...\\n• 【項目二】(P.2) 內文重點...",
   "chinese_summary": "• 【項目一】(P.1) 繁體中文重點說明...\\n• 【項目二】(P.2) 繁體中文重點說明...",
   "tags": [
-    {"name": "標籤名稱", "category": "主題 或 領域 或 方法 或 結論", "confidence": 0.95}
+    {"name": "標籤名稱", "category": "主題 或 領域 或 方法 或 結論", "confidence": 0.95, "page_number": 3}
   ]
 }
 
@@ -797,6 +805,9 @@ $truncatedText
 ''';
     }
   }
+
+  /// 公開的 AI 分析結果 JSON 解析方法（供測試與模組重用）
+  AiAnalysisResult parseAnalysisJson(String content) => _parseJsonAnalysis(content);
 
   AiAnalysisResult _parseJsonAnalysis(String content) {
     try {
@@ -928,6 +939,9 @@ $truncatedText
           }
         }
 
+        final rawPage = item['page_number'] ?? item['pageNumber'] ?? item['page'];
+        final pageNum = rawPage != null ? int.tryParse(rawPage.toString()) : null;
+
         results.add(TagItem(
           id: 'tag_${DateTime.now().microsecondsSinceEpoch}_${results.length}',
           name: normalizedName,
@@ -936,6 +950,7 @@ $truncatedText
           source: source,
           verified: false,
           codeSystem: codeSystem,
+          pageNumber: pageNum,
         ));
       }
     }

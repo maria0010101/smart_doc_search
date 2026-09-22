@@ -751,7 +751,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 ),
               ],
 
-              // Tags
+              // Tags (支援顯示實質所屬頁數並可點擊直達該頁)
               if (doc.tags.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 Wrap(
@@ -759,21 +759,57 @@ class _SearchScreenState extends State<SearchScreen> {
                   runSpacing: 4,
                   children: doc.tags.take(6).map((tag) {
                     final isMatched = hit.matchedTags.contains(tag.name);
-                    return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: isMatched
-                            ? AppTheme.accentColor.withValues(alpha: 0.2)
-                            : AppTheme.getCategoryColor(tag.category).withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(4),
-                        border: isMatched ? Border.all(color: AppTheme.accentColor, width: 0.8) : null,
-                      ),
-                      child: Text(
-                        '#${tag.name}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: isMatched ? FontWeight.bold : FontWeight.normal,
-                          color: isMatched ? Colors.amber.shade900 : AppTheme.getCategoryColor(tag.category),
+                    final tagPage = tag.pageNumber;
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(4),
+                      onTap: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (ctx) => DocumentDetailScreen(
+                              documentId: doc.id,
+                              repository: widget.repository,
+                              ollamaClient: widget.ollamaClient,
+                              initialPageNumber: tagPage ?? hit.pageNumber,
+                            ),
+                          ),
+                        );
+                        _performSearch();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isMatched
+                              ? AppTheme.accentColor.withValues(alpha: 0.2)
+                              : AppTheme.getCategoryColor(tag.category).withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(4),
+                          border: isMatched ? Border.all(color: AppTheme.accentColor, width: 0.8) : null,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '#${tag.name}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: isMatched ? FontWeight.bold : FontWeight.normal,
+                                color: isMatched ? Colors.amber.shade900 : AppTheme.getCategoryColor(tag.category),
+                              ),
+                            ),
+                            if (tagPage != null && tagPage > 0) ...[
+                              const SizedBox(width: 3),
+                              Text(
+                                '(P.$tagPage)',
+                                style: TextStyle(
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: isMatched
+                                      ? Colors.amber.shade900
+                                      : AppTheme.getCategoryColor(tag.category).withValues(alpha: 0.85),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                     );

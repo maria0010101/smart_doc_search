@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart' as syncfusion;
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/utils/hash_util.dart';
+import 'package:smart_doc_search/core/utils/tag_page_calibrator.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
@@ -337,6 +338,13 @@ class ImportService {
     if (aiSummary.isEmpty) {
       aiSummary = aggregatedFullText.length > 200 ? '${aggregatedFullText.substring(0, 200)}...' : aggregatedFullText;
     }
+
+    // 校準標籤所屬頁碼（排除目錄頁誤導，精準指向文獻實質討論之真實頁碼）
+    generatedTags = TagPageCalibrator.calibrateTags(
+      tags: generatedTags,
+      pages: pageItems,
+      title: title,
+    );
 
     // 4. AI Vector Embedding
     _emitProgress(fileName, ImportStage.generatingEmbedding, 0.85, '生成文獻向量嵌入...');
