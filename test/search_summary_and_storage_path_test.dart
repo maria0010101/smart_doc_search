@@ -231,6 +231,8 @@ void main() {
             ollamaClient: ollamaClient,
             onThemeChanged: (_) {},
             isDarkMode: false,
+            colorPaletteId: 'indigo',
+            onColorPaletteChanged: (_) {},
           ),
         ),
       );

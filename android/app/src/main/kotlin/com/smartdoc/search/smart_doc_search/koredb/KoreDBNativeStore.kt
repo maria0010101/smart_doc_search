@@ -368,6 +368,7 @@ class KoreDBNativeStore(private val context: Context) {
      * - w2 (0.4) * Vector cosine similarity
      * - w3 (0.2) * Tag match ratio
      */
+
     fun hybridSearch(
         keywords: List<String>,
         tags: List<String>,
@@ -377,6 +378,25 @@ class KoreDBNativeStore(private val context: Context) {
         offset: Int = 0
     ): JSONObject = lock.read {
         val startTime = System.currentTimeMillis()
+
+        // Operator-annotated keywords: '+term' required (AND), '-term' excluded,
+        // plain 'term' optional (relevance scoring only).
+        val requiredKeywords = mutableListOf<String>()
+        val optionalKeywords = mutableListOf<String>()
+        val excludedKeywords = mutableListOf<String>()
+        for (raw in keywords) {
+            val entry = raw.trim()
+            if (entry.isEmpty()) continue
+            when {
+                entry.startsWith("-") && entry.length > 1 ->
+                    excludedKeywords.add(entry.substring(1).trim())
+                entry.startsWith("+") && entry.length > 1 ->
+                    requiredKeywords.add(entry.substring(1).trim())
+                else -> optionalKeywords.add(entry)
+            }
+        }
+        val positiveKeywords = requiredKeywords + optionalKeywords
+        val constrainByText = positiveKeywords.isNotEmpty() || excludedKeywords.isNotEmpty()
 
         // 1. Filter candidates by tags if tags are specified
         val candidateDocIds = if (tags.isNotEmpty()) {
@@ -404,6 +424,11 @@ class KoreDBNativeStore(private val context: Context) {
         val w2 = 0.4f // vector
         val w3 = 0.2f // tags
 
+        val noQuery = positiveKeywords.isEmpty() && excludedKeywords.isEmpty() &&
+            semanticEmbedding == null && tags.isEmpty()
+        val exclusionOnly = positiveKeywords.isEmpty() && excludedKeywords.isNotEmpty() &&
+            semanticEmbedding == null && tags.isEmpty()
+
         val scoredResults = mutableListOf<JSONObject>()
 
         for (docId in candidateDocIds) {
@@ -414,9 +439,35 @@ class KoreDBNativeStore(private val context: Context) {
             val summary = doc.optString("summary", "")
             val pageTexts = pages[docId]?.joinToString(" ") { it.optString("ocrText", "") } ?: ""
             val fullText = "$title $summary $pageTexts"
+            val fullTextLower = fullText.lowercase()
+
+            // AND (+) / NOT (-) operator gates
+            if (constrainByText) {
+                var gatesPassed = true
+                for (term in requiredKeywords) {
+                    if (!fullTextLower.contains(term.lowercase())) {
+                        gatesPassed = false
+                        break
+                    }
+                }
+                if (gatesPassed) {
+                    for (term in excludedKeywords) {
+                        if (fullTextLower.contains(term.lowercase())) {
+                            gatesPassed = false
+                            break
+                        }
+                    }
+                }
+                if (!gatesPassed) continue
+            }
 
             // Keyword score
-            val kwScore = if (keywords.isNotEmpty()) bm25Score(fullText, keywords) else 0f
+            val kwScore = if (positiveKeywords.isNotEmpty()) bm25Score(fullText, positiveKeywords) else 0f
+            if (positiveKeywords.isNotEmpty() && kwScore <= 0f &&
+                semanticEmbedding == null && tags.isEmpty()
+            ) {
+                continue
+            }
 
             // Vector score
             val vecScore = vectorScores[docId] ?: 0f
@@ -430,7 +481,7 @@ class KoreDBNativeStore(private val context: Context) {
                 for (t in 0 until docTags.length()) {
                     val docTagName = docTags.getJSONObject(t).optString("name", "").trim().lowercase()
                     for (queryTag in tags) {
-                        if (docTagName.equals(queryTag.trim().lowercase(), ignoreCase = true)) {
+                        if (docTagName == queryTag.trim().lowercase()) {
                             matchCount++
                             matchedTagsList.add(queryTag)
                         }
@@ -440,23 +491,22 @@ class KoreDBNativeStore(private val context: Context) {
             }
 
             // Combined hybrid score
-            val totalScore = if (keywords.isEmpty() && semanticEmbedding == null && tags.isEmpty()) {
-                1.0f // All docs
+            val totalScore = if (noQuery || exclusionOnly) {
+                1.0f
             } else {
                 (w1 * kwScore) + (w2 * vecScore) + (w3 * tagScore)
             }
+            if (!noQuery && !exclusionOnly && totalScore <= 0f) continue
 
-            // Build highlight snippet if keyword matched
+            // Build highlight snippet if keyword matched (original casing kept)
             var highlightSnippet: String? = null
-            if (keywords.isNotEmpty()) {
-                for (kw in keywords) {
-                    val idx = fullText.indexOf(kw, ignoreCase = true)
-                    if (idx != -1) {
-                        val start = maxOf(0, idx - 40)
-                        val end = minOf(fullText.length, idx + kw.length + 40)
-                        highlightSnippet = "..." + fullText.substring(start, end).trim() + "..."
-                        break
-                    }
+            for (kw in positiveKeywords) {
+                val idx = fullText.indexOf(kw, ignoreCase = true)
+                if (idx != -1) {
+                    val start = maxOf(0, idx - 40)
+                    val end = minOf(fullText.length, idx + kw.length + 40)
+                    highlightSnippet = "..." + fullText.substring(start, end).trim() + "..."
+                    break
                 }
             }
 

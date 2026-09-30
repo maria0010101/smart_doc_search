@@ -1753,7 +1753,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                   ],
                 ),
                 IconButton(
-                  icon: const Icon(Icons.add_circle_outline, color: AppTheme.primaryColor),
+                  icon: Icon(Icons.add_circle_outline, color: AppTheme.primaryColor),
                   tooltip: '新增標籤',
                   onPressed: _showAddTagDialog,
                 ),

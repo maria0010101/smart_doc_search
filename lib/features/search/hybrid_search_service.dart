@@ -1,6 +1,7 @@
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
+import 'package:smart_doc_search/features/search/search_query_parser.dart';
 
 enum SearchSortOrder {
   relevance,
@@ -27,30 +28,43 @@ class HybridSearchService {
     DateTime? startDate,
     DateTime? endDate,
     SearchSortOrder sortOrder = SearchSortOrder.relevance,
-    int limit = 20,
+    int limit = 60,
     int offset = 0,
   }) async {
-    // 1. Tokenize queryText into keywords
-    final keywords = queryText.split(RegExp(r'\s+')).where((s) => s.trim().isNotEmpty).toList();
+    // 1. Parse operator-annotated query into required (+), optional and
+    //    excluded (-) keyword groups. Plain space separated keywords remain
+    //    optional and only influence ranking, matching search engine behaviour.
+    final parsed = SearchQueryParser.parse(queryText);
+    final hasFilters = selectedTags.isNotEmpty ||
+        fileTypeFilters.isNotEmpty ||
+        startDate != null ||
+        endDate != null;
 
-    // 2. If semantic search is requested, generate query embedding
+    // 2. If semantic search is requested, generate a query embedding from the
+    //    positive keywords only (operators carry no semantic meaning).
+    final semanticQueryText = parsed.positiveKeywords.join(' ');
     List<double>? queryEmbedding;
-    if (enableSemanticSearch && queryText.trim().isNotEmpty) {
+    if (enableSemanticSearch && semanticQueryText.trim().isNotEmpty) {
       try {
-        final emb = await ollamaClient.embed(text: queryText);
+        final emb = await ollamaClient.embed(text: semanticQueryText);
         if (emb.isNotEmpty) queryEmbedding = emb;
       } catch (_) {
         // Fallback to purely keyword + tag search
       }
     }
 
-    // 3. Call KoreDB hybrid search
+    // 3. Call the storage engine hybrid search. A wide candidate window is
+    //    fetched so that filters/sorting still see the full matching set.
+    // Only the window that can actually be displayed is requested, so the
+    // storage engine never computes snippets/pages for rows the UI drops.
+    final needsWideWindow =
+        hasFilters || sortOrder != SearchSortOrder.relevance;
     final rawResult = await dataSource.hybridSearch(
-      keywords: keywords,
+      keywords: parsed.toEncodedKeywords(),
       tags: selectedTags,
       tagMode: tagMode,
       semanticEmbedding: queryEmbedding,
-      limit: 100, // Fetch broader set for filtering
+      limit: needsWideWindow ? 500 : (offset + limit),
       offset: 0,
     );
 

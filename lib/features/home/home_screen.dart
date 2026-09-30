@@ -115,7 +115,7 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            const Icon(Icons.auto_stories, color: AppTheme.primaryColor),
+            Icon(Icons.auto_stories, color: AppTheme.primaryColor),
             const SizedBox(width: 8),
             const Text(
               '個人智能文獻檢索',
@@ -394,7 +394,7 @@ class _HomeScreenState extends State<HomeScreen> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
                 side: isSelected
-                    ? const BorderSide(color: AppTheme.primaryColor, width: 2)
+                    ? BorderSide(color: AppTheme.primaryColor, width: 2)
                     : BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.1)),
               ),
               color: isSelected
@@ -452,7 +452,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           if (isTablet && isSelected)
-                            const Icon(Icons.arrow_forward_ios, size: 14, color: AppTheme.primaryColor),
+                            Icon(Icons.arrow_forward_ios, size: 14, color: AppTheme.primaryColor),
                         ],
                       ),
                       if (doc.summary.isNotEmpty) ...[
@@ -516,7 +516,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: AppTheme.primaryColor.withValues(alpha: 0.08),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.auto_stories_outlined,
                 size: 64,
                 color: AppTheme.primaryColor,

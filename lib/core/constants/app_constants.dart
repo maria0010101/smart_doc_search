@@ -20,7 +20,7 @@ enum AiProvider {
 
 class AppConstants {
   // App Version
-  static const String appVersion = '0.1.4';
+  static const String appVersion = '0.1.6';
 
   // Database & Native Channel
   static const String koredbChannel = 'com.smartdoc.search/koredb';
@@ -153,7 +153,16 @@ class AppConstants {
   static const String prefGoogleModel = 'pref_google_model';
   static const String prefGoogleEmbeddingModel = 'pref_google_embedding_model';
 
+  /// Every SharedPreferences key that may hold an encrypted AI provider API key.
+  static const List<String> allApiKeyPrefKeys = [
+    prefDeepSeekApiKey,
+    prefOpenAiApiKey,
+    prefClaudeApiKey,
+    prefGoogleApiKey,
+  ];
+
   static const String prefDarkMode = 'pref_dark_mode';
+  static const String prefColorPalette = 'pref_color_palette';
   static const String prefEnableVector = 'pref_enable_vector';
   static const String prefDiseaseClassificationMode = 'pref_disease_classification_mode';
   static const String prefLiteratureStoragePath = 'pref_literature_storage_path';

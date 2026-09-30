@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/utils/tag_page_calibrator.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
+import 'package:smart_doc_search/features/search/search_query_parser.dart';
 
 abstract class KoreDbDataSource {
   Future<String> insertDocument(Document doc);
@@ -210,38 +211,40 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
       }
     }
 
-    // Fallback Dart implementation of Hybrid Search
+
+    // Fallback Dart implementation of Hybrid Search (used on Linux desktop and
+    // in unit tests). Mirrors the SQLite engine: operator gates (+ required,
+    // - excluded) plus substring scoring over one lower-cased body string.
+    final keywordSet = EncodedKeywordSet.fromEncoded(keywords);
+    final positiveKeywords = keywordSet.positive;
+
     var candidates = await queryByTags(tags, mode: tagMode);
     final hits = <DocumentHit>[];
 
+    final bool constrainByText = positiveKeywords.isNotEmpty || keywordSet.excluded.isNotEmpty;
+    final bool exclusionOnly = positiveKeywords.isEmpty &&
+        keywordSet.excluded.isNotEmpty &&
+        semanticEmbedding == null &&
+        tags.isEmpty;
+    final bool noQuery = !constrainByText && semanticEmbedding == null && tags.isEmpty;
+
     for (final doc in candidates) {
       final docPages = _fallbackPages[doc.id] ?? [];
-      final pageTexts = docPages.map((p) => p.ocrText).join(' ');
-      final fullText = '${doc.title} ${doc.summary} $pageTexts';
+      final body =
+          '${doc.title} ${doc.summary} ${docPages.map((p) => p.ocrText).join(' ')}'.toLowerCase();
+
+      // AND (+) / NOT (-) operator gates.
+      if (constrainByText && !keywordSet.matchesGates(body)) continue;
 
       double kwScore = 0.0;
-      String? highlight;
-
-      if (keywords.isNotEmpty) {
-        for (final page in docPages) {
-          for (final kw in keywords) {
-            final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(page.ocrText).length;
-            if (count > 0) {
-              kwScore += count * 1.5 / (count + 1.0);
-            }
-          }
-        }
-        for (final kw in keywords) {
-          final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(fullText).length;
-          if (count > 0 && kwScore == 0.0) {
-            kwScore += count * 1.5 / (count + 1.0);
-          }
-        }
+      if (positiveKeywords.isNotEmpty) {
+        kwScore = _keywordScore(body, positiveKeywords);
+        if (kwScore <= 0 && semanticEmbedding == null && tags.isEmpty) continue;
       }
 
       // 使用 TagPageCalibrator 智慧解析實質命中頁碼（優先取用標籤正確頁數，嚴格排除目錄頁誤導）
       final matchedPageNumber = TagPageCalibrator.resolveSubstantivePageForSearchHit(
-        searchKeywords: keywords,
+        searchKeywords: positiveKeywords,
         searchTags: tags,
         docTags: doc.tags,
         docPages: docPages,
@@ -249,31 +252,16 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
       );
 
       // 提取符合該實質命中頁面之引註片段
-      if (keywords.isNotEmpty && docPages.isNotEmpty) {
+      String? highlight;
+      if (positiveKeywords.isNotEmpty && docPages.isNotEmpty) {
         final targetPage = docPages.firstWhere(
           (p) => p.pageNumber == matchedPageNumber,
           orElse: () => docPages.first,
         );
-        for (final kw in keywords) {
-          final idx = targetPage.ocrText.toLowerCase().indexOf(kw.toLowerCase());
-          if (idx != -1) {
-            final start = max(0, idx - 50);
-            final end = min(targetPage.ocrText.length, idx + kw.length + 50);
-            highlight = '...${targetPage.ocrText.substring(start, end).trim()}...';
-            break;
-          }
-        }
-      }
-      if (highlight == null && keywords.isNotEmpty) {
-        for (final kw in keywords) {
-          final idx = fullText.toLowerCase().indexOf(kw.toLowerCase());
-          if (idx != -1) {
-            final start = max(0, idx - 50);
-            final end = min(fullText.length, idx + kw.length + 50);
-            highlight = '...${fullText.substring(start, end).trim()}...';
-            break;
-          }
-        }
+        highlight = _keywordSnippet(targetPage.ocrText, positiveKeywords) ??
+            _keywordSnippet('${doc.title} ${doc.summary}', positiveKeywords);
+      } else if (positiveKeywords.isNotEmpty) {
+        highlight = _keywordSnippet('${doc.title} ${doc.summary}', positiveKeywords);
       }
 
       double vecScore = 0.0;
@@ -293,11 +281,13 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
         tagScore = matchedTags.length / tags.length;
       }
 
-      final score = (keywords.isEmpty && semanticEmbedding == null && tags.isEmpty)
+      final score = (noQuery || exclusionOnly)
           ? 1.0
           : (AppConstants.weightKeyword * kwScore) +
               (AppConstants.weightVector * vecScore) +
               (AppConstants.weightTag * tagScore);
+
+      if (!noQuery && !exclusionOnly && score <= 0) continue;
 
       hits.add(DocumentHit(
         document: doc,
@@ -319,6 +309,45 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
     );
   }
 
+  /// Counts keyword occurrences with plain substring scanning (faster than
+  /// compiling a RegExp per keyword per page).
+  static double _keywordScore(String haystackLower, List<String> terms) {
+    if (terms.isEmpty || haystackLower.isEmpty) return 0.0;
+    var score = 0.0;
+    for (final rawTerm in terms) {
+      final term = rawTerm.toLowerCase().trim();
+      if (term.isEmpty) continue;
+      var count = 0;
+      var index = 0;
+      while (true) {
+        final found = haystackLower.indexOf(term, index);
+        if (found < 0) break;
+        count++;
+        index = found + term.length;
+        if (count >= 64) break;
+      }
+      if (count > 0) score += count * 1.5 / (count + 1.0);
+    }
+    return score;
+  }
+
+  /// Builds a context snippet around the first keyword hit, preserving the
+  /// original text casing.
+  static String? _keywordSnippet(String text, List<String> keywords) {
+    if (text.isEmpty) return null;
+    final lower = text.toLowerCase();
+    for (final rawKeyword in keywords) {
+      final keyword = rawKeyword.toLowerCase().trim();
+      if (keyword.isEmpty) continue;
+      final index = lower.indexOf(keyword);
+      if (index != -1) {
+        final start = max(0, index - 50);
+        final end = min(text.length, index + keyword.length + 50);
+        return '...${text.substring(start, end).trim()}...';
+      }
+    }
+    return null;
+  }
   double _cosineSimilarity(List<double> a, List<double> b) {
     if (a.isEmpty || b.isEmpty) return 0.0;
     final len = min(a.length, b.length);

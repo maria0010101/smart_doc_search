@@ -10,6 +10,7 @@ import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/utils/tag_page_calibrator.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
+import 'package:smart_doc_search/features/search/search_query_parser.dart';
 
 /// SQLite Desktop Data Source for Windows 11 and Linux
 /// Provides ACID local storage using sqflite_common_ffi and shares
@@ -58,7 +59,17 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
     final db = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 2,
+        version: 3,
+        onConfigure: (db) async {
+          // Desktop stability pragmas (Windows 11 & Linux).
+          // WAL keeps reads fast while writes are in flight and busy_timeout
+          // prevents transient 'database is locked' failures.
+          try {
+            await db.rawQuery('PRAGMA journal_mode = WAL;');
+            await db.rawQuery('PRAGMA synchronous = NORMAL;');
+            await db.rawQuery('PRAGMA busy_timeout = 5000;');
+          } catch (_) {}
+        },
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE IF NOT EXISTS documents (
@@ -106,12 +117,27 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
 
           await db.execute('CREATE INDEX IF NOT EXISTS idx_pages_doc ON pages (document_id);');
           await db.execute('CREATE INDEX IF NOT EXISTS idx_tags_name ON tags (name);');
+
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS doc_index (
+              doc_id TEXT PRIMARY KEY,
+              body TEXT
+            );
+          ''');
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
             try {
               await db.execute('ALTER TABLE tags ADD COLUMN code_system TEXT;');
             } catch (_) {}
+          }
+          if (oldVersion < 3) {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS doc_index (
+                doc_id TEXT PRIMARY KEY,
+                body TEXT
+              );
+            ''');
           }
         },
       ),
@@ -183,6 +209,7 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
       }
     }
 
+    await _refreshDocIndexRow(doc.id, db);
     return doc.id;
   }
 
@@ -213,6 +240,9 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
       where: 'id = ?',
       whereArgs: [doc.id],
     );
+    if (count > 0) {
+      await _refreshDocIndexRow(doc.id, db);
+    }
     return count > 0;
   }
 
@@ -220,7 +250,9 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
   Future<bool> deleteDocument(String id) async {
     final db = await database;
     await db.delete('pages', where: 'document_id = ?', whereArgs: [id]);
+    await db.delete('doc_index', where: 'doc_id = ?', whereArgs: [id]);
     final count = await db.delete('documents', where: 'id = ?', whereArgs: [id]);
+    _markIndexDirty(null);
     return count > 0;
   }
 
@@ -294,6 +326,7 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
     }).toList();
   }
 
+
   @override
   Future<SearchResult> hybridSearch({
     List<String> keywords = const [],
@@ -304,91 +337,44 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
     int offset = 0,
   }) async {
     final sw = Stopwatch()..start();
-    final db = await database;
-    var candidates = await getAllDocuments();
+    final keywordSet = EncodedKeywordSet.fromEncoded(keywords);
+    final positiveKeywords = keywordSet.positive;
 
-    // 1. Tag filtering
+    // 1. Candidate documents (tags applied first so the heavy text scan only
+    //    ever runs over the smallest possible set).
+    var candidates = await _queryDocuments(includeEmbedding: semanticEmbedding != null);
     if (tags.isNotEmpty) {
       candidates = candidates.where((doc) {
         final docTagNames = doc.tags.map((t) => t.name.toLowerCase()).toSet();
         if (tagMode == 'AND') {
           return tags.every((qt) => docTagNames.contains(qt.toLowerCase()));
-        } else {
-          return tags.any((qt) => docTagNames.contains(qt.toLowerCase()));
         }
+        return tags.any((qt) => docTagNames.contains(qt.toLowerCase()));
       }).toList();
     }
 
-    // Load all pages for full-text search and page matching
-    final pagesRows = await db.query('pages', orderBy: 'page_number ASC');
-    final Map<String, List<PageItem>> docPages = {};
-    for (final r in pagesRows) {
-      final docId = r['document_id'] as String;
-      docPages.putIfAbsent(docId, () => []).add(_mapRowToPage(r));
-    }
+    // 2. Keyword scan over the maintained lower-cased full-text cache.
+    await _ensureDocIndex();
+    final bodies = await _loadIndexBodies(candidates.map((d) => d.id).toList());
 
-    // 2. Score candidates
+    final bool constrainByText = positiveKeywords.isNotEmpty || keywordSet.excluded.isNotEmpty;
+    final bool exclusionOnly = positiveKeywords.isEmpty &&
+        keywordSet.excluded.isNotEmpty &&
+        semanticEmbedding == null &&
+        tags.isEmpty;
+    final bool noQuery = !constrainByText && semanticEmbedding == null && tags.isEmpty;
+
     final scored = <DocumentHit>[];
     for (final doc in candidates) {
-      final pages = docPages[doc.id] ?? [];
-      final pageTexts = pages.map((p) => p.ocrText).join(' ');
-      final fullText = '${doc.title} ${doc.summary} $pageTexts';
+      final body = bodies[doc.id] ?? ('${doc.title} ${doc.summary}').toLowerCase();
+
+      // AND (+) / NOT (-) operator gates.
+      if (constrainByText && !keywordSet.matchesGates(body)) continue;
 
       double kwScore = 0.0;
-      String? snippet;
-
-      if (keywords.isNotEmpty) {
-        for (final p in pages) {
-          for (final kw in keywords) {
-            final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(p.ocrText).length;
-            if (count > 0) {
-              kwScore += count * 1.5 / (count + 1.0);
-            }
-          }
-        }
-        for (final kw in keywords) {
-          final count = RegExp(RegExp.escape(kw), caseSensitive: false).allMatches(fullText).length;
-          if (count > 0 && kwScore == 0.0) {
-            kwScore += count * 1.5 / (count + 1.0);
-          }
-        }
-      }
-
-      // 使用 TagPageCalibrator 智慧解析實質命中頁碼（優先取用標籤正確頁數，嚴格排除目錄頁誤導）
-      final matchedPageNumber = TagPageCalibrator.resolveSubstantivePageForSearchHit(
-        searchKeywords: keywords,
-        searchTags: tags,
-        docTags: doc.tags,
-        docPages: pages,
-        docSummary: doc.summary,
-      );
-
-      // 提取符合該實質命中頁面之引註片段
-      if (keywords.isNotEmpty && pages.isNotEmpty) {
-        final targetPage = pages.firstWhere(
-          (p) => p.pageNumber == matchedPageNumber,
-          orElse: () => pages.first,
-        );
-        for (final kw in keywords) {
-          final idx = targetPage.ocrText.toLowerCase().indexOf(kw.toLowerCase());
-          if (idx != -1) {
-            final start = max(0, idx - 50);
-            final end = min(targetPage.ocrText.length, idx + kw.length + 50);
-            snippet = '...${targetPage.ocrText.substring(start, end).trim()}...';
-            break;
-          }
-        }
-      }
-      if (snippet == null && keywords.isNotEmpty) {
-        for (final kw in keywords) {
-          final idx = fullText.toLowerCase().indexOf(kw.toLowerCase());
-          if (idx != -1) {
-            final start = max(0, idx - 50);
-            final end = min(fullText.length, idx + kw.length + 50);
-            snippet = '...${fullText.substring(start, end).trim()}...';
-            break;
-          }
-        }
+      if (positiveKeywords.isNotEmpty) {
+        kwScore = _termScore(body, positiveKeywords);
+        if (kwScore <= 0 && semanticEmbedding == null && tags.isEmpty) continue;
       }
 
       double vecScore = 0.0;
@@ -401,37 +387,310 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
       if (tags.isNotEmpty) {
         final docTagNames = doc.tags.map((t) => t.name.toLowerCase()).toSet();
         for (final t in tags) {
-          if (docTagNames.contains(t.toLowerCase())) {
-            matchedTags.add(t);
-          }
+          if (docTagNames.contains(t.toLowerCase())) matchedTags.add(t);
         }
         tagScore = matchedTags.length / tags.length;
       }
 
-      double totalScore = (keywords.isEmpty && semanticEmbedding == null && tags.isEmpty)
+      final double totalScore = (noQuery || exclusionOnly)
           ? 1.0
-          : (AppConstants.weightKeyword * kwScore) + (AppConstants.weightVector * vecScore) + (AppConstants.weightTag * tagScore);
+          : (AppConstants.weightKeyword * kwScore) +
+              (AppConstants.weightVector * vecScore) +
+              (AppConstants.weightTag * tagScore);
 
-      if (totalScore > 0 || (keywords.isEmpty && tags.isEmpty)) {
-        scored.add(DocumentHit(
-          document: doc,
-          score: totalScore,
-          highlight: snippet,
-          matchedTags: matchedTags,
-          pageNumber: matchedPageNumber,
-        ));
-      }
+      if (!noQuery && !exclusionOnly && totalScore <= 0) continue;
+
+      scored.add(DocumentHit(
+        document: doc,
+        score: totalScore,
+        matchedTags: matchedTags,
+      ));
     }
 
+    // 3. Rank and slice before the expensive per-document page work.
     scored.sort((a, b) => b.score.compareTo(a.score));
+    final total = scored.length;
     final paged = scored.skip(offset).take(limit).toList();
-    sw.stop();
 
+    // 4. Snippet + calibrated page number only for the returned window.
+    final enriched = await _enrichHits(paged, positiveKeywords, tags);
+
+    sw.stop();
     return SearchResult(
-      items: paged,
-      total: scored.length,
+      items: enriched,
+      total: total,
       tookMs: sw.elapsedMilliseconds,
     );
+  }
+
+  /// Loads documents for search. Vector JSON is only decoded when semantic
+  /// search is active, avoiding the cost of parsing megabytes of embedding data
+  /// on every keyword-only query (a major win on large corpora).
+  Future<List<Document>> _queryDocuments({bool includeEmbedding = false}) async {
+    final db = await database;
+    final rows = await db.query(
+      'documents',
+      columns: includeEmbedding
+          ? null
+          : const [
+              'id',
+              'title',
+              'source_type',
+              'file_hash',
+              'file_path',
+              'page_count',
+              'summary',
+              'chinese_summary',
+              'detected_language',
+              'tags_json',
+              'metadata_json',
+              'created_at',
+              'updated_at',
+            ],
+      orderBy: 'updated_at DESC',
+    );
+    return rows.map(_mapRowToDocument).toList();
+  }
+
+  /// Attaches the highlight snippet and calibrated page number to the hits that
+  /// are actually returned, loading page text only for those documents.
+  Future<List<DocumentHit>> _enrichHits(
+    List<DocumentHit> hits,
+    List<String> keywords,
+    List<String> tags,
+  ) async {
+    if (hits.isEmpty) return hits;
+    final pagesByDoc = await _loadPageMap(hits.map((h) => h.document.id).toList());
+
+    final out = <DocumentHit>[];
+    for (final hit in hits) {
+      final doc = hit.document;
+      final pages = pagesByDoc[doc.id] ?? const <PageItem>[];
+      int? pageNumber;
+      String? snippet;
+
+      if (pages.isNotEmpty) {
+        pageNumber = TagPageCalibrator.resolveSubstantivePageForSearchHit(
+          searchKeywords: keywords,
+          searchTags: tags,
+          docTags: doc.tags,
+          docPages: pages,
+          docSummary: doc.summary,
+        );
+        if (keywords.isNotEmpty) {
+          final targetPage = pages.firstWhere(
+            (p) => p.pageNumber == pageNumber,
+            orElse: () => pages.first,
+          );
+          snippet = _snippetFromText(targetPage.ocrText, keywords) ??
+              _snippetFromText('${doc.title} ${doc.summary}', keywords);
+        }
+      }
+      if (snippet == null && keywords.isNotEmpty) {
+        snippet = _snippetFromText('${doc.title} ${doc.summary}', keywords);
+      }
+
+      out.add(DocumentHit(
+        document: doc,
+        score: hit.score,
+        highlight: snippet,
+        matchedTags: hit.matchedTags,
+        pageNumber: pageNumber,
+      ));
+    }
+    return out;
+  }
+
+  /// Bulk page loading restricted to the given documents (chunked to stay well
+  /// below SQLite's bound-parameter limit).
+  Future<Map<String, List<PageItem>>> _loadPageMap(List<String> docIds) async {
+    final db = await database;
+    final map = <String, List<PageItem>>{};
+    if (docIds.isEmpty) return map;
+    const chunkSize = 400;
+    for (var i = 0; i < docIds.length; i += chunkSize) {
+      final end = (i + chunkSize < docIds.length) ? i + chunkSize : docIds.length;
+      final slice = docIds.sublist(i, end);
+      if (slice.isEmpty) continue;
+      final placeholders = List.filled(slice.length, '?').join(',');
+      final rows = await db.rawQuery(
+        'SELECT * FROM pages WHERE document_id IN ($placeholders) ORDER BY page_number ASC',
+        slice,
+      );
+      for (final row in rows) {
+        map.putIfAbsent(row['document_id'] as String, () => []).add(_mapRowToPage(row));
+      }
+    }
+    return map;
+  }
+
+  static String? _snippetFromText(String text, List<String> keywords) {
+    if (text.isEmpty) return null;
+    final lower = text.toLowerCase();
+    for (final rawKeyword in keywords) {
+      final keyword = rawKeyword.toLowerCase().trim();
+      if (keyword.isEmpty) continue;
+      final index = lower.indexOf(keyword);
+      if (index != -1) {
+        final start = max(0, index - 50);
+        final end = min(text.length, index + keyword.length + 50);
+        return '...${text.substring(start, end).trim()}...';
+      }
+    }
+    return null;
+  }
+
+  /// Counts keyword occurrences with plain substring scanning instead of
+  /// compiling a RegExp per keyword per page (substantially faster).
+  static double _termScore(String haystackLower, List<String> terms) {
+    if (terms.isEmpty || haystackLower.isEmpty) return 0.0;
+    var score = 0.0;
+    for (final rawTerm in terms) {
+      final term = rawTerm.toLowerCase().trim();
+      if (term.isEmpty) continue;
+      var count = 0;
+      var index = 0;
+      while (true) {
+        final found = haystackLower.indexOf(term, index);
+        if (found < 0) break;
+        count++;
+        index = found + term.length;
+        if (count >= 64) break;
+      }
+      if (count > 0) {
+        score += count * 1.5 / (count + 1.0);
+      }
+    }
+    return score;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Full-text cache (doc_index) keeping keyword search fast on large corpora.
+  // Every write path keeps the cache consistent and a document/index count check
+  // acts as a safety net, rebuilding transparently if the cache ever drifts.
+  // ---------------------------------------------------------------------------
+
+  bool _indexReady = false;
+  final Set<String> _dirtyDocIds = <String>{};
+
+  void _markIndexDirty(String? docId) {
+    if (docId != null && docId.isNotEmpty) _dirtyDocIds.add(docId);
+    _indexReady = false;
+  }
+
+  Future<void> _refreshDocIndexRow(String docId, [Database? dbOverride]) async {
+    final db = dbOverride ?? await database;
+    final docRows = await db.query(
+      'documents',
+      columns: ['title', 'summary'],
+      where: 'id = ?',
+      whereArgs: [docId],
+      limit: 1,
+    );
+    if (docRows.isEmpty) {
+      await db.delete('doc_index', where: 'doc_id = ?', whereArgs: [docId]);
+      _dirtyDocIds.remove(docId);
+      return;
+    }
+    final pageRows = await db.query(
+      'pages',
+      columns: ['ocr_text'],
+      where: 'document_id = ?',
+      whereArgs: [docId],
+      orderBy: 'page_number ASC',
+    );
+    final body = StringBuffer()
+      ..write(docRows.first['title'] ?? '')
+      ..write(' ')
+      ..write(docRows.first['summary'] ?? '')
+      ..write(' ');
+    for (final row in pageRows) {
+      body.write((row['ocr_text'] ?? '') as String);
+      body.write(' ');
+    }
+    await db.insert(
+      'doc_index',
+      {'doc_id': docId, 'body': body.toString().toLowerCase()},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    _dirtyDocIds.remove(docId);
+  }
+
+  Future<void> _rebuildDocIndex() async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('doc_index');
+      final docs = await txn.query('documents', columns: ['id', 'title', 'summary']);
+      final pages = await txn.query(
+        'pages',
+        columns: ['document_id', 'ocr_text'],
+        orderBy: 'page_number ASC',
+      );
+      final buffers = <String, StringBuffer>{};
+      for (final doc in docs) {
+        buffers[doc['id'] as String] = StringBuffer()
+          ..write(doc['title'] ?? '')
+          ..write(' ')
+          ..write(doc['summary'] ?? '')
+          ..write(' ');
+      }
+      for (final page in pages) {
+        final id = page['document_id'] as String;
+        buffers[id]?.write((page['ocr_text'] ?? '').toString());
+        buffers[id]?.write(' ');
+      }
+      final batch = txn.batch();
+      buffers.forEach((id, buffer) {
+        batch.insert(
+          'doc_index',
+          {'doc_id': id, 'body': buffer.toString().toLowerCase()},
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      });
+      await batch.commit(noResult: true);
+    });
+    _dirtyDocIds.clear();
+    _indexReady = true;
+  }
+
+  Future<void> _ensureDocIndex() async {
+    if (_indexReady && _dirtyDocIds.isEmpty) return;
+    final db = await database;
+    if (_dirtyDocIds.isNotEmpty) {
+      for (final id in List<String>.from(_dirtyDocIds)) {
+        await _refreshDocIndexRow(id, db);
+      }
+    }
+    final docCount =
+        ((await db.rawQuery('SELECT COUNT(*) AS c FROM documents')).first['c'] as num?)?.toInt() ?? 0;
+    final indexCount =
+        ((await db.rawQuery('SELECT COUNT(*) AS c FROM doc_index')).first['c'] as num?)?.toInt() ?? 0;
+    if (docCount != indexCount) {
+      await _rebuildDocIndex();
+    } else {
+      _indexReady = true;
+    }
+  }
+
+  Future<Map<String, String>> _loadIndexBodies(List<String> docIds) async {
+    final bodies = <String, String>{};
+    if (docIds.isEmpty) return bodies;
+    final db = await database;
+    const chunkSize = 800;
+    for (var i = 0; i < docIds.length; i += chunkSize) {
+      final end = (i + chunkSize < docIds.length) ? i + chunkSize : docIds.length;
+      final slice = docIds.sublist(i, end);
+      if (slice.isEmpty) continue;
+      final placeholders = List.filled(slice.length, '?').join(',');
+      final rows = await db.rawQuery(
+        'SELECT doc_id, body FROM doc_index WHERE doc_id IN ($placeholders)',
+        slice,
+      );
+      for (final row in rows) {
+        bodies[row['doc_id'] as String] = (row['body'] ?? '') as String;
+      }
+    }
+    return bodies;
   }
 
   double _cosineSimilarity(List<double> v1, List<double> v2) {
@@ -467,6 +726,7 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    _markIndexDirty(page.documentId);
     return page.id;
   }
 
@@ -639,10 +899,15 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
     final db = await database;
     final Map<String, dynamic> root = json.decode(backupJson);
 
+    // Force the full-text cache to be rebuilt after a restore.
+    _dirtyDocIds.clear();
+    _indexReady = false;
+
     return await db.transaction<bool>((txn) async {
       await txn.delete('pages');
       await txn.delete('documents');
       await txn.delete('tags');
+      await txn.delete('doc_index');
 
       if (root['documents'] is List) {
         for (final item in root['documents']) {
@@ -789,7 +1054,10 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
       await txn.delete('pages');
       await txn.delete('documents');
       await txn.delete('tags');
+      await txn.delete('doc_index');
     });
+    _dirtyDocIds.clear();
+    _indexReady = false;
     return true;
   }
 

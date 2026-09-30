@@ -113,7 +113,7 @@ void main() {
       final encrypted = SecurityUtil.encrypt(originalKey);
 
       expect(encrypted, isNot(originalKey));
-      expect(encrypted.startsWith('enc:v1:'), isTrue);
+      expect(encrypted.startsWith('enc:v2:'), isTrue);
 
       final decrypted = SecurityUtil.decrypt(encrypted);
       expect(decrypted, originalKey);
@@ -132,7 +132,7 @@ void main() {
       await SecurityUtil.saveEncryptedKey(prefs, AppConstants.prefOpenAiApiKey, openAiKey);
       final rawStored = prefs.getString(AppConstants.prefOpenAiApiKey);
       expect(rawStored, isNotNull);
-      expect(rawStored!.startsWith('enc:v1:'), isTrue);
+      expect(rawStored!.startsWith('enc:v2:'), isTrue);
 
       final decrypted = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefOpenAiApiKey);
       expect(decrypted, openAiKey);

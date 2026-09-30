@@ -1,4 +1,4 @@
-# 個人智能文獻檢索 (Smart Document Search) v0.1.5
+# 個人智能文獻檢索 (Smart Document Search) v0.1.6
 
 基於 Flutter + Kotlin 原生橋接、嵌入式 KoreDB 引擎、SQLite 跨平台引擎與多模型雲端 / 地端 AI 的個人智能文獻檢索系統（支援 Android 與 Windows 11）。
 
@@ -33,6 +33,14 @@
    - 平板與桌面模式自動切換為雙欄主從導航架構，左側即時瀏覽清單，右側同步載入文獻詳情與頁面版面。
 9. **備份與還原機制**：
    - 支援全庫 JSON 導出與導入備份，具備 GZip 壓縮與跨平台相容性。
+10. **進階關鍵字運算子檢索 (v0.1.6)**：
+   - 支援 `+` 連結關鍵字之 AND 語意（結果必須全部包含）與 `-` 標註關鍵字之 NOT 語意（結果排除該關鍵字），並保留 `COVID-19`、`IL-6` 等連字號專有名詞。
+11. **大量文獻檢索效能優化 (v0.1.6)**：
+   - 導入常駐全文索引快取 (`doc_index`)、子字串掃描取代正規表達式、非語義查詢不解析向量 JSON，並將頁碼/引註計算延後至實際回傳的結果集。
+12. **跨平台 API 金鑰加密持久化 (v0.1.6)**：
+   - 金鑰以 HMAC-SHA256 串流加密後存放於 `<Documents>/SmartDocSearch/secure/api_keys.json`，修正 Windows 環境需重複輸入金鑰之問題。
+13. **多配色主題與介面美化 (v0.1.6)**：
+   - 提供 7 種配色主題（靛藍／森綠／深海藍／紫羅蘭／暖陽橙／玫瑰紅／石墨灰），可與深色模式自由組合。
 
 ---
 
@@ -67,7 +75,7 @@ flutter build apk --release
 ```
 
 產出 APK 位置：
-- Release APK: `/home/hpd/下載/smart_doc_search-release.apk` (54.7 MB)
+- Release APK: `/home/hpd/下載/smart_doc_search-v0.1.6-release.apk`
 - 原始建置目錄: `/home/hpd/AndroidStudioProjects/smart_doc_search/build/app/outputs/flutter-apk/app-release.apk`
 
 ---

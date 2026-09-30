@@ -27,6 +27,7 @@ void main() {
       importService: importService,
       searchService: searchService,
       initialDarkMode: false,
+      initialColorPalette: 'indigo',
     ));
 
     await tester.pumpAndSettle();

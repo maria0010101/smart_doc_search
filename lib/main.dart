@@ -5,7 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
-import 'package:smart_doc_search/core/utils/security_util.dart';
+import 'package:smart_doc_search/core/utils/api_key_store.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/datasources/sqlite_desktop_datasource.dart';
@@ -24,6 +24,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = await SharedPreferences.getInstance();
   final isDarkMode = prefs.getBool(AppConstants.prefDarkMode) ?? false;
+  final colorPaletteId =
+      prefs.getString(AppConstants.prefColorPalette) ?? AppTheme.defaultPaletteId;
 
   final savedProvId = prefs.getString(AppConstants.prefAiProvider);
   final provider = AiProvider.fromId(savedProvId);
@@ -49,24 +51,24 @@ void main() async {
     case AiProvider.deepseek:
       host = prefs.getString(AppConstants.prefDeepSeekHost) ?? AppConstants.defaultDeepSeekHost;
       textModel = prefs.getString(AppConstants.prefDeepSeekModel) ?? AppConstants.defaultDeepSeekModel;
-      apiKey = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefDeepSeekApiKey);
+      apiKey = await ApiKeyStore.instance.read(AppConstants.prefDeepSeekApiKey);
       break;
     case AiProvider.openai:
       host = prefs.getString(AppConstants.prefOpenAiHost) ?? AppConstants.defaultOpenAiHost;
       textModel = prefs.getString(AppConstants.prefOpenAiModel) ?? AppConstants.defaultOpenAiModel;
       embedModel = prefs.getString(AppConstants.prefOpenAiEmbeddingModel) ?? AppConstants.defaultOpenAiEmbeddingModel;
-      apiKey = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefOpenAiApiKey);
+      apiKey = await ApiKeyStore.instance.read(AppConstants.prefOpenAiApiKey);
       break;
     case AiProvider.claude:
       host = prefs.getString(AppConstants.prefClaudeHost) ?? AppConstants.defaultClaudeHost;
       textModel = prefs.getString(AppConstants.prefClaudeModel) ?? AppConstants.defaultClaudeModel;
-      apiKey = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefClaudeApiKey);
+      apiKey = await ApiKeyStore.instance.read(AppConstants.prefClaudeApiKey);
       break;
     case AiProvider.google:
       host = prefs.getString(AppConstants.prefGoogleHost) ?? AppConstants.defaultGoogleHost;
       textModel = prefs.getString(AppConstants.prefGoogleModel) ?? AppConstants.defaultGoogleModel;
       embedModel = prefs.getString(AppConstants.prefGoogleEmbeddingModel) ?? AppConstants.defaultGoogleEmbeddingModel;
-      apiKey = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefGoogleApiKey);
+      apiKey = await ApiKeyStore.instance.read(AppConstants.prefGoogleApiKey);
       break;
   }
 
@@ -181,6 +183,7 @@ Table 1: Recommended Disease Classification and ICD Mapping
     importService: importService,
     searchService: searchService,
     initialDarkMode: isDarkMode,
+    initialColorPalette: colorPaletteId,
   ));
 }
 
@@ -190,6 +193,7 @@ class SmartDocSearchApp extends StatefulWidget {
   final ImportService importService;
   final HybridSearchService searchService;
   final bool initialDarkMode;
+  final String initialColorPalette;
 
   const SmartDocSearchApp({
     super.key,
@@ -198,6 +202,7 @@ class SmartDocSearchApp extends StatefulWidget {
     required this.importService,
     required this.searchService,
     required this.initialDarkMode,
+    required this.initialColorPalette,
   });
 
   @override
@@ -206,11 +211,13 @@ class SmartDocSearchApp extends StatefulWidget {
 
 class _SmartDocSearchAppState extends State<SmartDocSearchApp> {
   late bool _isDarkMode;
+  late String _colorPaletteId;
 
   @override
   void initState() {
     super.initState();
     _isDarkMode = widget.initialDarkMode;
+    _colorPaletteId = widget.initialColorPalette;
   }
 
   void _toggleTheme(bool dark) async {
@@ -219,13 +226,20 @@ class _SmartDocSearchAppState extends State<SmartDocSearchApp> {
     await prefs.setBool(AppConstants.prefDarkMode, dark);
   }
 
+  void _changePalette(String paletteId) {
+    setState(() => _colorPaletteId = paletteId);
+    SharedPreferences.getInstance().then(
+      (prefs) => prefs.setString(AppConstants.prefColorPalette, paletteId),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '個人智能文獻檢索',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
+      theme: AppTheme.themeFor(Brightness.light, paletteId: _colorPaletteId),
+      darkTheme: AppTheme.themeFor(Brightness.dark, paletteId: _colorPaletteId),
       themeMode: _isDarkMode ? ThemeMode.dark : ThemeMode.light,
       home: MainNavigationShell(
         repository: widget.repository,
@@ -234,6 +248,8 @@ class _SmartDocSearchAppState extends State<SmartDocSearchApp> {
         searchService: widget.searchService,
         isDarkMode: _isDarkMode,
         onThemeChanged: _toggleTheme,
+        colorPaletteId: _colorPaletteId,
+        onColorPaletteChanged: _changePalette,
       ),
     );
   }
@@ -246,6 +262,8 @@ class MainNavigationShell extends StatefulWidget {
   final HybridSearchService searchService;
   final bool isDarkMode;
   final Function(bool) onThemeChanged;
+  final String colorPaletteId;
+  final Function(String) onColorPaletteChanged;
 
   const MainNavigationShell({
     super.key,
@@ -255,6 +273,8 @@ class MainNavigationShell extends StatefulWidget {
     required this.searchService,
     required this.isDarkMode,
     required this.onThemeChanged,
+    required this.colorPaletteId,
+    required this.onColorPaletteChanged,
   });
 
   @override
@@ -316,6 +336,8 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
         ollamaClient: widget.ollamaClient,
         isDarkMode: widget.isDarkMode,
         onThemeChanged: widget.onThemeChanged,
+        colorPaletteId: widget.colorPaletteId,
+        onColorPaletteChanged: widget.onColorPaletteChanged,
       ),
     ];
 

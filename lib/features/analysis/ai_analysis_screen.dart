@@ -6,7 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
-import 'package:smart_doc_search/core/utils/security_util.dart';
+import 'package:smart_doc_search/core/utils/api_key_store.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
@@ -154,22 +154,22 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen> {
       case AiProvider.deepseek:
         widget.ollamaClient.host = prefs.getString(AppConstants.prefDeepSeekHost) ?? AppConstants.defaultDeepSeekHost;
         widget.ollamaClient.textModel = prefs.getString(AppConstants.prefDeepSeekModel) ?? AppConstants.defaultDeepSeekModel;
-        widget.ollamaClient.apiKey = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefDeepSeekApiKey);
+        widget.ollamaClient.apiKey = await ApiKeyStore.instance.read(AppConstants.prefDeepSeekApiKey);
         break;
       case AiProvider.openai:
         widget.ollamaClient.host = prefs.getString(AppConstants.prefOpenAiHost) ?? AppConstants.defaultOpenAiHost;
         widget.ollamaClient.textModel = prefs.getString(AppConstants.prefOpenAiModel) ?? AppConstants.defaultOpenAiModel;
-        widget.ollamaClient.apiKey = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefOpenAiApiKey);
+        widget.ollamaClient.apiKey = await ApiKeyStore.instance.read(AppConstants.prefOpenAiApiKey);
         break;
       case AiProvider.claude:
         widget.ollamaClient.host = prefs.getString(AppConstants.prefClaudeHost) ?? AppConstants.defaultClaudeHost;
         widget.ollamaClient.textModel = prefs.getString(AppConstants.prefClaudeModel) ?? AppConstants.defaultClaudeModel;
-        widget.ollamaClient.apiKey = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefClaudeApiKey);
+        widget.ollamaClient.apiKey = await ApiKeyStore.instance.read(AppConstants.prefClaudeApiKey);
         break;
       case AiProvider.google:
         widget.ollamaClient.host = prefs.getString(AppConstants.prefGoogleHost) ?? AppConstants.defaultGoogleHost;
         widget.ollamaClient.textModel = prefs.getString(AppConstants.prefGoogleModel) ?? AppConstants.defaultGoogleModel;
-        widget.ollamaClient.apiKey = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefGoogleApiKey);
+        widget.ollamaClient.apiKey = await ApiKeyStore.instance.read(AppConstants.prefGoogleApiKey);
         break;
     }
 
@@ -540,7 +540,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          title: const Row(
+          title: Row(
             children: [
               Icon(Icons.save_alt, color: AppTheme.primaryColor),
               SizedBox(width: 8),
@@ -671,7 +671,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: Row(
                   children: [
-                    const Icon(Icons.history, color: AppTheme.primaryColor),
+                    Icon(Icons.history, color: AppTheme.primaryColor),
                     const SizedBox(width: 8),
                     Text('分析歷史記錄 (${history.length}/20)',
                         style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
@@ -885,7 +885,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Row(
+        title: Row(
           children: [
             Icon(Icons.psychology, color: AppTheme.primaryColor),
             SizedBox(width: 8),
@@ -988,7 +988,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(
           children: [
-            const Icon(Icons.hub_outlined, size: 20, color: AppTheme.primaryColor),
+            Icon(Icons.hub_outlined, size: 20, color: AppTheme.primaryColor),
             const SizedBox(width: 8),
             const Text('Provider：', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
             Expanded(
@@ -1105,7 +1105,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.description, size: 18, color: AppTheme.primaryColor),
+                    Icon(Icons.description, size: 18, color: AppTheme.primaryColor),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -1300,7 +1300,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen> {
             // Header Row: Model & Elapsed Time Badge
             Row(
               children: [
-                const Icon(Icons.insights, color: AppTheme.primaryColor),
+                Icon(Icons.insights, color: AppTheme.primaryColor),
                 const SizedBox(width: 8),
                 const Text('分析結果', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
                 const Spacer(),
@@ -1402,7 +1402,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen> {
             // Multi-dimensional Tags Header
             Row(
               children: [
-                const Icon(Icons.label, size: 18, color: AppTheme.primaryColor),
+                Icon(Icons.label, size: 18, color: AppTheme.primaryColor),
                 const SizedBox(width: 6),
                 Text('多維標籤 (${_currentTags.length})',
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
@@ -1514,7 +1514,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen> {
           padding: EdgeInsets.symmetric(horizontal: isEmbedded ? 0 : 16, vertical: 8),
           child: Row(
             children: [
-              const Icon(Icons.menu_book, color: AppTheme.primaryColor),
+              Icon(Icons.menu_book, color: AppTheme.primaryColor),
               const SizedBox(width: 8),
               Text(
                 '相關文獻 (${_relevantDocs.length} 篇)',
@@ -1689,7 +1689,7 @@ class _AiAnalysisScreenState extends State<AiAnalysisScreen> {
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const Icon(Icons.check, size: 12, color: AppTheme.primaryColor),
+                                    Icon(Icons.check, size: 12, color: AppTheme.primaryColor),
                                     const SizedBox(width: 2),
                                     Text(t, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
                                   ],

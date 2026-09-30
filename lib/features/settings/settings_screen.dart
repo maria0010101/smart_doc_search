@@ -4,6 +4,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
+import 'package:smart_doc_search/core/theme/app_theme.dart';
+import 'package:smart_doc_search/core/utils/api_key_store.dart';
 import 'package:smart_doc_search/core/utils/security_util.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
@@ -14,6 +16,8 @@ class SettingsScreen extends StatefulWidget {
   final OllamaClient ollamaClient;
   final Function(bool) onThemeChanged;
   final bool isDarkMode;
+  final String colorPaletteId;
+  final Function(String) onColorPaletteChanged;
 
   const SettingsScreen({
     super.key,
@@ -21,6 +25,8 @@ class SettingsScreen extends StatefulWidget {
     required this.ollamaClient,
     required this.onThemeChanged,
     required this.isDarkMode,
+    required this.colorPaletteId,
+    required this.onColorPaletteChanged,
   });
 
   @override
@@ -132,6 +138,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final savedProvId = prefs.getString(AppConstants.prefAiProvider);
     final prov = savedProvId != null ? AiProvider.fromId(savedProvId) : widget.ollamaClient.provider;
 
+    // Encrypted API keys are read from the dedicated cross-platform keystore so
+    // they survive restarts on Windows as well as Android.
+    final deepSeekKey = await ApiKeyStore.instance.read(AppConstants.prefDeepSeekApiKey);
+    final openAiKey = await ApiKeyStore.instance.read(AppConstants.prefOpenAiApiKey);
+    final claudeKey = await ApiKeyStore.instance.read(AppConstants.prefClaudeApiKey);
+    final googleKey = await ApiKeyStore.instance.read(AppConstants.prefGoogleApiKey);
+    if (!mounted) return;
+
     setState(() {
       _selectedProvider = prov;
 
@@ -144,23 +158,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _fastApiHostCtrl.text = prefs.getString(AppConstants.prefFastApiHost) ?? AppConstants.defaultFastApiHost;
 
       // DeepSeek
-      _deepSeekKeyCtrl.text = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefDeepSeekApiKey);
+      _deepSeekKeyCtrl.text = deepSeekKey;
       _deepSeekHostCtrl.text = prefs.getString(AppConstants.prefDeepSeekHost) ?? AppConstants.defaultDeepSeekHost;
       _deepSeekModel = prefs.getString(AppConstants.prefDeepSeekModel) ?? AppConstants.defaultDeepSeekModel;
 
       // OpenAI
-      _openAiKeyCtrl.text = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefOpenAiApiKey);
+      _openAiKeyCtrl.text = openAiKey;
       _openAiHostCtrl.text = prefs.getString(AppConstants.prefOpenAiHost) ?? AppConstants.defaultOpenAiHost;
       _openAiModel = prefs.getString(AppConstants.prefOpenAiModel) ?? AppConstants.defaultOpenAiModel;
       _openAiEmbeddingModel = prefs.getString(AppConstants.prefOpenAiEmbeddingModel) ?? AppConstants.defaultOpenAiEmbeddingModel;
 
       // Claude
-      _claudeKeyCtrl.text = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefClaudeApiKey);
+      _claudeKeyCtrl.text = claudeKey;
       _claudeHostCtrl.text = prefs.getString(AppConstants.prefClaudeHost) ?? AppConstants.defaultClaudeHost;
       _claudeModel = prefs.getString(AppConstants.prefClaudeModel) ?? AppConstants.defaultClaudeModel;
 
       // Google
-      _googleKeyCtrl.text = SecurityUtil.getDecryptedKey(prefs, AppConstants.prefGoogleApiKey);
+      _googleKeyCtrl.text = googleKey;
       _googleHostCtrl.text = prefs.getString(AppConstants.prefGoogleHost) ?? AppConstants.defaultGoogleHost;
       _googleModel = prefs.getString(AppConstants.prefGoogleModel) ?? AppConstants.defaultGoogleModel;
       _googleEmbeddingModel = prefs.getString(AppConstants.prefGoogleEmbeddingModel) ?? AppConstants.defaultGoogleEmbeddingModel;
@@ -204,6 +218,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// SharedPreferences key of the currently selected cloud provider, or null
+  /// for providers that do not use an API key.
+  String? _activeApiKeyPrefKey() {
+    switch (_selectedProvider) {
+      case AiProvider.deepseek:
+        return AppConstants.prefDeepSeekApiKey;
+      case AiProvider.openai:
+        return AppConstants.prefOpenAiApiKey;
+      case AiProvider.claude:
+        return AppConstants.prefClaudeApiKey;
+      case AiProvider.google:
+        return AppConstants.prefGoogleApiKey;
+      case AiProvider.ollama:
+      case AiProvider.fastapi:
+        return null;
+    }
+  }
+
+  String _activeApiKeyValue() {
+    switch (_selectedProvider) {
+      case AiProvider.deepseek:
+        return _deepSeekKeyCtrl.text;
+      case AiProvider.openai:
+        return _openAiKeyCtrl.text;
+      case AiProvider.claude:
+        return _claudeKeyCtrl.text;
+      case AiProvider.google:
+        return _googleKeyCtrl.text;
+      case AiProvider.ollama:
+      case AiProvider.fastapi:
+        return '';
+    }
+  }
+
   Future<void> _saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -219,23 +267,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setBool(AppConstants.prefFastApiEnabled, _selectedProvider == AiProvider.fastapi);
 
     // DeepSeek
-    await SecurityUtil.saveEncryptedKey(prefs, AppConstants.prefDeepSeekApiKey, _deepSeekKeyCtrl.text.trim());
+    await ApiKeyStore.instance.write(AppConstants.prefDeepSeekApiKey, _deepSeekKeyCtrl.text.trim());
     await prefs.setString(AppConstants.prefDeepSeekHost, _deepSeekHostCtrl.text.trim());
     await prefs.setString(AppConstants.prefDeepSeekModel, _deepSeekModel);
 
     // OpenAI
-    await SecurityUtil.saveEncryptedKey(prefs, AppConstants.prefOpenAiApiKey, _openAiKeyCtrl.text.trim());
+    await ApiKeyStore.instance.write(AppConstants.prefOpenAiApiKey, _openAiKeyCtrl.text.trim());
     await prefs.setString(AppConstants.prefOpenAiHost, _openAiHostCtrl.text.trim());
     await prefs.setString(AppConstants.prefOpenAiModel, _openAiModel);
     await prefs.setString(AppConstants.prefOpenAiEmbeddingModel, _openAiEmbeddingModel);
 
     // Claude
-    await SecurityUtil.saveEncryptedKey(prefs, AppConstants.prefClaudeApiKey, _claudeKeyCtrl.text.trim());
+    await ApiKeyStore.instance.write(AppConstants.prefClaudeApiKey, _claudeKeyCtrl.text.trim());
     await prefs.setString(AppConstants.prefClaudeHost, _claudeHostCtrl.text.trim());
     await prefs.setString(AppConstants.prefClaudeModel, _claudeModel);
 
     // Google
-    await SecurityUtil.saveEncryptedKey(prefs, AppConstants.prefGoogleApiKey, _googleKeyCtrl.text.trim());
+    await ApiKeyStore.instance.write(AppConstants.prefGoogleApiKey, _googleKeyCtrl.text.trim());
     await prefs.setString(AppConstants.prefGoogleHost, _googleHostCtrl.text.trim());
     await prefs.setString(AppConstants.prefGoogleModel, _googleModel);
     await prefs.setString(AppConstants.prefGoogleEmbeddingModel, _googleEmbeddingModel);
@@ -286,11 +334,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
         break;
     }
 
+    // Verify the encrypted keystore round-trip so a storage failure is surfaced
+    // instead of silently forcing the user to re-enter the key on the next launch.
+    final activePrefKey = _activeApiKeyPrefKey();
+    var keyPersisted = true;
+    if (activePrefKey != null) {
+      final expected = _activeApiKeyValue().trim();
+      final stored = await ApiKeyStore.instance.read(activePrefKey);
+      keyPersisted = expected.isEmpty || stored == expected;
+    }
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('已成功儲存 ${_selectedProvider.displayName} 設定'),
-          backgroundColor: Colors.teal,
+          content: Text(
+            keyPersisted
+                ? '已成功儲存 ${_selectedProvider.displayName} 設定（金鑰已加密存放）'
+                : '設定已套用，但 API Key 無法寫入本機儲存空間，請檢查資料夾權限',
+          ),
+          backgroundColor: keyPersisted ? Colors.teal : Colors.orange.shade800,
         ),
       );
     }
@@ -631,6 +693,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (confirm == true) {
       final prefs = await SharedPreferences.getInstance();
+      await ApiKeyStore.instance.clearAll(AppConstants.allApiKeyPrefKeys);
       await SecurityUtil.clearAllApiKeys(prefs);
       await prefs.remove(AiAnalysisService.prefHistoryKey);
 
@@ -1199,10 +1262,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
               contentPadding: EdgeInsets.zero,
               secondary: const Icon(Icons.dark_mode_outlined),
               title: const Text('深色模式 (Dark Theme)'),
+              subtitle: const Text('可與下方配色主題自由組合，設定會自動記憶。'),
               value: widget.isDarkMode,
               onChanged: (val) {
                 widget.onThemeChanged(val);
               },
+            ),
+            const SizedBox(height: 6),
+            const Text('配色主題 (Color Palette)', style: TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: AppTheme.palettes.map((palette) {
+                final selected = palette.id == widget.colorPaletteId;
+                return ChoiceChip(
+                  selected: selected,
+                  showCheckmark: false,
+                  label: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [palette.seed, palette.accent],
+                          ),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        palette.name,
+                        style: TextStyle(
+                          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                          color: selected ? AppTheme.primaryColor : null,
+                        ),
+                      ),
+                    ],
+                  ),
+                  onSelected: (_) => widget.onColorPaletteChanged(palette.id),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '目前使用「${AppTheme.paletteById(widget.colorPaletteId).name}」配色，深色/淺色模式皆會套用。',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
             ),
             const ListTile(
               contentPadding: EdgeInsets.zero,

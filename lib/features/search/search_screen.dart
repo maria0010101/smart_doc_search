@@ -7,6 +7,7 @@ import 'package:smart_doc_search/data/models/document_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
 import 'package:smart_doc_search/features/document/document_detail_screen.dart';
 import 'package:smart_doc_search/features/search/hybrid_search_service.dart';
+import 'package:smart_doc_search/features/search/search_query_parser.dart';
 
 class SearchScreen extends StatefulWidget {
   final DocumentRepository repository;
@@ -95,6 +96,56 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
+  /// Displays the supported search operators together with concrete examples.
+  void _showSearchSyntaxHelp() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('進階搜尋語法'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Text('支援與主流搜尋引擎相同的前置運算子：',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              SizedBox(height: 12),
+              _SyntaxRow(
+                operator: '+',
+                title: '必須包含（AND）',
+                example: '糖尿病+心血管',
+                description: '以 + 連結前後關鍵字時，結果必須同時包含所有關鍵字。',
+              ),
+              _SyntaxRow(
+                operator: '-',
+                title: '排除（NOT）',
+                example: '糖尿病 -動物實驗',
+                description: '以 - 標註關鍵字時，結果會排除包含該關鍵字的文獻。',
+              ),
+              _SyntaxRow(
+                operator: '空白',
+                title: '一般關鍵字（OR）',
+                example: '糖尿病 心血管',
+                description: '以空白分隔的關鍵字為選用詞，僅影響排序權重，不需全部命中。',
+              ),
+              SizedBox(height: 4),
+              Text('組合範例：糖尿病+心血管 -動物實驗', style: TextStyle(fontSize: 12.5)),
+              SizedBox(height: 4),
+              Text('※ COVID-19、IL-6 等連字號詞彙不會被誤判為排除運算子。',
+                  style: TextStyle(fontSize: 12)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('了解'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _clearAllFilters() {
     setState(() {
       _selectedTags.clear();
@@ -121,6 +172,11 @@ class _SearchScreenState extends State<SearchScreen> {
                   label: const Text('重設篩選'),
                   onPressed: _clearAllFilters,
                 ),
+              IconButton(
+                icon: const Icon(Icons.help_outline),
+                tooltip: '搜尋語法說明 (+ / -)',
+                onPressed: _showSearchSyntaxHelp,
+              ),
               IconButton(
                 icon: const Icon(Icons.filter_list),
                 tooltip: '進階篩選與排序',
@@ -158,7 +214,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       child: TextField(
                         controller: _searchCtrl,
                         decoration: InputDecoration(
-                          hintText: '輸入關鍵字、醫學術語、疾病編碼或語義問題...',
+                          hintText: '輸入關鍵字，可用 + 連結必要詞、- 排除詞...',
                           prefixIcon: const Icon(Icons.search),
                           suffixIcon: _searchCtrl.text.isNotEmpty
                               ? IconButton(
@@ -391,7 +447,7 @@ class _SearchScreenState extends State<SearchScreen> {
           child: TextField(
             controller: _searchCtrl,
             decoration: InputDecoration(
-              hintText: '輸入關鍵字或語義問題...',
+              hintText: '輸入關鍵字，可用 + 連結必要詞、- 排除詞...',
               prefixIcon: const Icon(Icons.search),
               suffixIcon: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -419,6 +475,26 @@ class _SearchScreenState extends State<SearchScreen> {
             onSubmitted: (_) => _performSearch(),
           ),
         ),
+
+        // Parsed operator feedback (+ required / - excluded)
+        Builder(builder: (context) {
+          final parsed = SearchQueryParser.parse(_searchCtrl.text);
+          if (!parsed.hasOperators) return const SizedBox.shrink();
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                parsed.operatorSummary,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.primaryColor,
+                ),
+              ),
+            ),
+          );
+        }),
 
         // Tag Filter Bar
         if (_allTags.isNotEmpty)
@@ -616,7 +692,7 @@ class _SearchScreenState extends State<SearchScreen> {
                     ),
                     child: Text(
                       '$scorePercent% 相關度',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11,
                         color: AppTheme.secondaryColor,
                         fontWeight: FontWeight.bold,
@@ -979,6 +1055,61 @@ class _SearchScreenState extends State<SearchScreen> {
           },
         );
       },
+    );
+  }
+}
+
+/// One row of the search syntax help dialog.
+class _SyntaxRow extends StatelessWidget {
+  final String operator;
+  final String title;
+  final String example;
+  final String description;
+
+  const _SyntaxRow({
+    required this.operator,
+    required this.title,
+    required this.example,
+    required this.description,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: AppTheme.primaryColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              operator,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: AppTheme.primaryColor,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 2),
+                Text('範例：$example',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                const SizedBox(height: 2),
+                Text(description, style: const TextStyle(fontSize: 12)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

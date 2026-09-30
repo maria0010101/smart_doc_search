@@ -125,7 +125,7 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: const Row(
+          title: Row(
             children: [
               Icon(Icons.edit_note, color: AppTheme.primaryColor),
               SizedBox(width: 8),
@@ -265,7 +265,7 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
           appBar: AppBar(
             title: Row(
               children: [
-                const Icon(Icons.folder_copy_outlined, color: AppTheme.primaryColor),
+                Icon(Icons.folder_copy_outlined, color: AppTheme.primaryColor),
                 const SizedBox(width: 8),
                 const Text('文獻清單', style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(width: 8),
@@ -277,7 +277,7 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
                   ),
                   child: Text(
                     '${_filteredDocuments.length}/${_allDocuments.length}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
                       color: AppTheme.primaryColor,
@@ -501,7 +501,7 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: isSelected
-            ? const BorderSide(color: AppTheme.primaryColor, width: 2)
+            ? BorderSide(color: AppTheme.primaryColor, width: 2)
             : BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.1)),
       ),
       color: isSelected
@@ -729,7 +729,7 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
                 color: AppTheme.primaryColor.withValues(alpha: 0.08),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.folder_special_outlined,
                 size: 64,
                 color: AppTheme.primaryColor,
