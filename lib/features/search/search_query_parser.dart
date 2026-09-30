@@ -68,12 +68,19 @@ class SearchQueryParser {
       (codeUnit >= 0x4E00 && codeUnit <= 0x9FFF) ||
       (codeUnit >= 0xF900 && codeUnit <= 0xFAFF);
 
-  static ParsedSearchQuery parse(String raw) {
+  /// [requireAll] implements the UI "全部符合 (AND)" mode: every plain
+  /// (operator-less) keyword is promoted to a **required** keyword so a result
+  /// must contain all of them. The explicit `+` / `-` operators keep working
+  /// and always take precedence over the mode.
+  ///
+  /// Keywords may be separated by whitespace or by the full-width separators
+  /// `、`, `，` and `；` (common when typing Chinese medical terms).
+  static ParsedSearchQuery parse(String raw, {bool requireAll = false}) {
     final required = <String>[];
     final optional = <String>[];
     final excluded = <String>[];
 
-    for (final token in raw.split(RegExp(r'\s+'))) {
+    for (final token in raw.split(RegExp(r'[\s、，；]+'))) {
       if (token.isEmpty) continue;
       for (final segment in _splitToken(token)) {
         final term = segment.$2;
@@ -86,7 +93,7 @@ class SearchQueryParser {
             excluded.add(term);
             break;
           default:
-            optional.add(term);
+            (requireAll ? required : optional).add(term);
         }
       }
     }

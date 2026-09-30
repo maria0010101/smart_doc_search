@@ -79,6 +79,7 @@ class _SearchScreenState extends State<SearchScreen> {
         queryText: _searchCtrl.text.trim(),
         selectedTags: _selectedTags.toList(),
         tagMode: _tagMode,
+        requireAllKeywords: _tagMode == 'AND',
         enableSemanticSearch: _enableSemanticSearch,
         fileTypeFilters: _fileTypeFilters.toList(),
         sortOrder: _sortOrder,
@@ -130,6 +131,9 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
               SizedBox(height: 4),
               Text('組合範例：糖尿病+心血管 -動物實驗', style: TextStyle(fontSize: 12.5)),
+              SizedBox(height: 6),
+              Text('※ 切換鈕「全部符合」會把上面所有一般關鍵字都視為必須包含；'
+                  '「任一符合」則只需命中其中一個。', style: TextStyle(fontSize: 12)),
               SizedBox(height: 4),
               Text('※ COVID-19、IL-6 等連字號詞彙不會被誤判為排除運算子。',
                   style: TextStyle(fontSize: 12)),
@@ -214,7 +218,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       child: TextField(
                         controller: _searchCtrl,
                         decoration: InputDecoration(
-                          hintText: '輸入關鍵字，可用 + 連結必要詞、- 排除詞...',
+                          hintText: '輸入多個關鍵字（空白分隔），亦可使用 + 必要詞、- 排除詞',
                           prefixIcon: const Icon(Icons.search),
                           suffixIcon: _searchCtrl.text.isNotEmpty
                               ? IconButton(
@@ -263,7 +267,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       ActionChip(
                         avatar: Icon(_tagMode == 'AND' ? Icons.all_inclusive : Icons.alt_route, size: 14),
                         label: Text(
-                          _tagMode == 'AND' ? '模式: 符合全部標籤 (AND)' : '模式: 符合任一標籤 (OR)',
+                          _tagMode == 'AND' ? '關鍵字+標籤: 全部符合 (AND)' : '關鍵字+標籤: 任一符合 (OR)',
                           style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
                         ),
                         visualDensity: VisualDensity.compact,
@@ -447,7 +451,7 @@ class _SearchScreenState extends State<SearchScreen> {
           child: TextField(
             controller: _searchCtrl,
             decoration: InputDecoration(
-              hintText: '輸入關鍵字，可用 + 連結必要詞、- 排除詞...',
+              hintText: '輸入多個關鍵字（空白分隔），亦可使用 + 必要詞、- 排除詞',
               prefixIcon: const Icon(Icons.search),
               suffixIcon: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -478,7 +482,8 @@ class _SearchScreenState extends State<SearchScreen> {
 
         // Parsed operator feedback (+ required / - excluded)
         Builder(builder: (context) {
-          final parsed = SearchQueryParser.parse(_searchCtrl.text);
+          final parsed =
+              SearchQueryParser.parse(_searchCtrl.text, requireAll: _tagMode == 'AND');
           if (!parsed.hasOperators) return const SizedBox.shrink();
           return Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
@@ -506,7 +511,7 @@ class _SearchScreenState extends State<SearchScreen> {
               children: [
                 // AND/OR Toggle Chip
                 ActionChip(
-                  label: Text(_tagMode == 'AND' ? '模式: 全部符合 (AND)' : '模式: 任一符合 (OR)'),
+                  label: Text(_tagMode == 'AND' ? '關鍵字+標籤: 全部符合 (AND)' : '關鍵字+標籤: 任一符合 (OR)'),
                   avatar: Icon(_tagMode == 'AND' ? Icons.all_inclusive : Icons.alt_route, size: 16),
                   onPressed: () {
                     setState(() {

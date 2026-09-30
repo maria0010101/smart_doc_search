@@ -42,6 +42,21 @@ void main() {
       expect(parsed.optional, isEmpty);
     });
 
+    test('requireAll promotes plain keywords to required (AND mode)', () {
+      final parsed = SearchQueryParser.parse('糖尿病 心血管 腎病變', requireAll: true);
+      expect(parsed.required, ['糖尿病', '心血管', '腎病變']);
+      expect(parsed.optional, isEmpty);
+      // Explicit operators still take precedence over the mode.
+      final withOps = SearchQueryParser.parse('糖尿病 -動物 +指引', requireAll: true);
+      expect(withOps.required, ['糖尿病', '指引']);
+      expect(withOps.excluded, ['動物']);
+    });
+
+    test('full-width separators split keywords', () {
+      final parsed = SearchQueryParser.parse('糖尿病、心血管，腎病變；飲食');
+      expect(parsed.optional, ['糖尿病', '心血管', '腎病變', '飲食']);
+    });
+
     test('EncodedKeywordSet decodes prefixes and enforces gates', () {
       final set = EncodedKeywordSet.fromEncoded(['+A', 'B', '-C']);
       expect(set.required, ['A']);
@@ -122,6 +137,24 @@ void main() {
         enableSemanticSearch: false,
       );
       expect(result.items.length, 3);
+    });
+
+    test('全部符合 (AND) mode requires every keyword to be present', () async {
+      final result = await service.executeSearch(
+        queryText: '糖尿病 心血管',
+        requireAllKeywords: true,
+        enableSemanticSearch: false,
+      );
+      expect(result.items.map((hit) => hit.document.id).toList(), ['d1']);
+    });
+
+    test('全部符合 (AND) mode still honours the - exclusion operator', () async {
+      final result = await service.executeSearch(
+        queryText: '糖尿病 -心血管',
+        requireAllKeywords: true,
+        enableSemanticSearch: false,
+      );
+      expect(result.items.map((hit) => hit.document.id).toList(), ['d2']);
     });
   });
 }

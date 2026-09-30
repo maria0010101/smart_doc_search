@@ -23,6 +23,9 @@ class HybridSearchService {
     required String queryText,
     List<String> selectedTags = const [],
     String tagMode = 'AND',
+    /// When true the "全部符合 (AND)" mode is applied to the text keywords as
+    /// well, so every entered keyword must appear in a matching document.
+    bool requireAllKeywords = false,
     bool enableSemanticSearch = true,
     List<String> fileTypeFilters = const [],
     DateTime? startDate,
@@ -34,7 +37,7 @@ class HybridSearchService {
     // 1. Parse operator-annotated query into required (+), optional and
     //    excluded (-) keyword groups. Plain space separated keywords remain
     //    optional and only influence ranking, matching search engine behaviour.
-    final parsed = SearchQueryParser.parse(queryText);
+    final parsed = SearchQueryParser.parse(queryText, requireAll: requireAllKeywords);
     final hasFilters = selectedTags.isNotEmpty ||
         fileTypeFilters.isNotEmpty ||
         startDate != null ||
