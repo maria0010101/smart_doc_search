@@ -154,6 +154,33 @@ Table 1: Recommended Disease Classification and ICD Mapping
         metadata: {
           'chineseSummary': '【中文摘要說明】\n本篇英文臨床指引針對「第2型糖尿病 (ICD-10: E11)」合併「心血管動脈硬化疾病 (ICD-10: I25)」之成年患者提供實證處置建議。核心內容包括積極控制糖化血色素 (HbA1c < 7.0%)、優先選用具備心腎保護效益之 SGLT2 抑制劑，並調控血壓與胰島素阻抗。可作為內分泌代謝科、心臟科及疾病編碼對應之核心參考文獻。',
           'language': 'en',
+          'academic_metadata': {
+            'authors': ['American Diabetes Association (ADA)', 'American College of Cardiology (ACC)'],
+            'doi': '10.2337/dc24-S010',
+            'publication_year': 2024,
+            'journal': 'Diabetes Care & Circulation Guidelines',
+            'citations': ['ADA Standards of Care 2024', 'ACC Expert Consensus Decision Pathway'],
+            'keywords': ['Type 2 Diabetes', 'Cardiovascular Disease', 'SGLT2 Inhibitor', 'HbA1c', 'ICD-10']
+          },
+          'clinical_findings': {
+            'principal_diagnosis': '第2型糖尿病 (Type 2 Diabetes Mellitus)',
+            'secondary_diagnoses': ['動脈硬化性心臟病', '本態性高血壓'],
+            'procedures': ['心血管風險綜合評估', 'SGLT2抑制劑處方治療', '糖化血色素監測'],
+            'lab_values': [
+              {'test_name': 'HbA1c (糖化血色素)', 'value': '< 7.0', 'unit': '%', 'reference_range': '< 7.0% (控制目標)'},
+              {'test_name': '血壓 (BP)', 'value': '< 130/80', 'unit': 'mmHg', 'reference_range': '< 130/80 mmHg'}
+            ],
+            'icd_codes': [
+              {'code': 'E11.9', 'title': '第2型糖尿病，無併發症', 'system': 'ICD-10-CM'},
+              {'code': 'I25.1', 'title': '動脈粥樣硬化性心臟病', 'system': 'ICD-10-CM'},
+              {'code': 'I10', 'title': '本態性原發性高血壓', 'system': 'ICD-10-CM'}
+            ]
+          },
+          'knowledge_triplets': [
+            {'subject': '第2型糖尿病', 'predicate': '顯著引發併發症', 'object': '動脈粥樣硬化性心臟病', 'confidence': 0.98},
+            {'subject': 'SGLT2抑制劑', 'predicate': '提供心腎保護效益於', 'object': '第2型糖尿病', 'confidence': 0.96},
+            {'subject': 'HbA1c < 7.0%', 'predicate': '作為臨床控制目標於', 'object': '第2型糖尿病', 'confidence': 0.95}
+          ]
         },
       );
 
@@ -330,6 +357,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
       ),
       TagManagementScreen(
         repository: widget.repository,
+        ollamaClient: widget.ollamaClient,
       ),
       SettingsScreen(
         repository: widget.repository,

@@ -2,11 +2,15 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:smart_doc_search/core/services/knowledge_graph_service.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
+import 'package:smart_doc_search/core/utils/document_extraction_util.dart';
 import 'package:smart_doc_search/core/utils/tag_page_calibrator.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
+import 'package:smart_doc_search/data/models/knowledge_graph_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
+import 'package:smart_doc_search/features/graph/knowledge_graph_screen.dart';
 import 'package:uuid/uuid.dart';
 
 class DocumentDetailScreen extends StatefulWidget {
@@ -38,6 +42,8 @@ class DocumentDetailScreen extends StatefulWidget {
 class _DocumentDetailScreenState extends State<DocumentDetailScreen> with SingleTickerProviderStateMixin {
   Document? _document;
   List<PageItem> _pages = [];
+  List<Document> _allDocuments = [];
+  final KnowledgeGraphService _graphService = KnowledgeGraphService();
   bool _isLoading = true;
   late TabController _tabController;
 
@@ -74,11 +80,13 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     setState(() => _isLoading = true);
     final doc = await widget.repository.getDocument(widget.documentId);
     final pages = await widget.repository.getDocumentPages(widget.documentId);
+    final allDocs = await widget.repository.getAllDocuments();
 
     if (mounted) {
       setState(() {
         _document = doc;
         _pages = pages;
+        _allDocuments = allDocs;
         _isLoading = false;
         if (doc != null) {
           _titleCtrl.text = doc.title;
@@ -432,6 +440,15 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
         if (analysis.chineseSummary.isNotEmpty) {
           updatedMetadata['chineseSummary'] = analysis.chineseSummary;
         }
+        if (analysis.academicMetadata != null && analysis.academicMetadata!.isNotEmpty) {
+          updatedMetadata['academic_metadata'] = analysis.academicMetadata!.toMap();
+        }
+        if (analysis.clinicalFinding != null && analysis.clinicalFinding!.isNotEmpty) {
+          updatedMetadata['clinical_findings'] = analysis.clinicalFinding!.toMap();
+        }
+        if (analysis.knowledgeTriplets.isNotEmpty) {
+          updatedMetadata['knowledge_triplets'] = analysis.knowledgeTriplets.map((t) => t.toMap()).toList();
+        }
 
         final updated = _document!.copyWith(
           tags: combinedTags,
@@ -664,6 +681,25 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.hub_outlined),
+            tooltip: '檢視本文獻之知識圖譜關聯',
+            onPressed: () {
+              if (_document != null) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => KnowledgeGraphScreen(
+                      repository: widget.repository,
+                      ollamaClient: widget.ollamaClient,
+                      focusDocId: _document!.id,
+                      focusDocTitle: _document!.title,
+                    ),
+                  ),
+                );
+              }
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.open_in_new),
             tooltip: '直接開啟原始檔案',
@@ -1434,6 +1470,21 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
 
         // 3. Medical & Structured Tags Card
         _buildMedicalTagsCard(doc, sortedCategories, tagsByCategory),
+
+        const SizedBox(height: 14),
+
+        // 4. RapidDoc Clinical Findings Card (疾病分類與臨床數據結構化擷取)
+        _buildRapidDocClinicalFindingsCard(doc, isDark),
+
+        const SizedBox(height: 14),
+
+        // 5. GraphifyPDF Academic Metadata Card (學術元數據抓取)
+        _buildGraphifyPdfAcademicMetadataCard(doc, isDark),
+
+        const SizedBox(height: 14),
+
+        // 6. Cross-Document Relations & Knowledge Triplets Card (知識網絡與跨文獻關聯)
+        _buildKnowledgeRelationsCard(doc, isDark),
       ],
     );
   }
@@ -1958,6 +2009,467 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
             child: SelectableText(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildRapidDocClinicalFindingsCard(Document doc, bool isDark) {
+    final rawFindings = doc.metadata['clinical_findings'];
+    ClinicalFinding? finding;
+    if (rawFindings != null) {
+      try {
+        finding = ClinicalFinding.fromMap(Map<String, dynamic>.from(rawFindings));
+      } catch (_) {}
+    }
+    if (finding == null || finding.isEmpty) {
+      final fullText = _pages.map((p) => p.ocrText).join('\n');
+      if (fullText.isNotEmpty) {
+        finding = DocumentExtractionUtil.extractClinicalFindings(fullText);
+      }
+    }
+    if (finding == null || finding.isEmpty) return const SizedBox.shrink();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.analytics_outlined, color: Colors.teal, size: 22),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    '疾病分類與臨床數據結構化擷取 (RapidDoc)',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.teal.withValues(alpha: 0.4)),
+                  ),
+                  child: const Text('ICD-10 / 臨床', style: TextStyle(fontSize: 10.5, color: Colors.teal, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+            const Divider(),
+
+            // Principal Diagnosis
+            if (finding.principalDiagnosis != null && finding.principalDiagnosis!.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('主要診斷：', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.teal)),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: isDark ? const Color(0xFF0F2B2A) : Colors.teal.shade50,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.teal.shade300),
+                        ),
+                        child: Text(
+                          finding.principalDiagnosis!,
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: isDark ? Colors.teal.shade200 : Colors.teal.shade900),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+
+            // Secondary Diagnoses
+            if (finding.secondaryDiagnoses.isNotEmpty) ...[
+              const Text('次要診斷 / 合併症：', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: finding.secondaryDiagnoses.map((d) => Chip(
+                  label: Text(d, style: const TextStyle(fontSize: 11)),
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor: isDark ? Colors.blueGrey.shade900 : Colors.blueGrey.shade50,
+                )).toList(),
+              ),
+              const SizedBox(height: 8),
+            ],
+
+            // Procedures
+            if (finding.procedures.isNotEmpty) ...[
+              const Text('醫療處置與處方：', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: finding.procedures.map((p) => Chip(
+                  avatar: const Icon(Icons.healing, size: 13, color: Colors.indigo),
+                  label: Text(p, style: const TextStyle(fontSize: 11)),
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor: isDark ? Colors.indigo.shade900.withValues(alpha: 0.3) : Colors.indigo.shade50,
+                )).toList(),
+              ),
+              const SizedBox(height: 8),
+            ],
+
+            // Clinical Lab Values Table
+            if (finding.labValues.isNotEmpty) ...[
+              const Text('臨床指標與檢驗數據：', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+              const SizedBox(height: 6),
+              Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: isDark ? Colors.blueGrey.shade800 : Colors.grey.shade300),
+                ),
+                child: Table(
+                  columnWidths: const {
+                    0: FlexColumnWidth(2.0),
+                    1: FlexColumnWidth(1.2),
+                    2: FlexColumnWidth(1.8),
+                  },
+                  children: [
+                    TableRow(
+                      decoration: BoxDecoration(
+                        color: isDark ? Colors.blueGrey.shade900 : Colors.grey.shade100,
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+                      ),
+                      children: const [
+                        Padding(padding: EdgeInsets.all(8), child: Text('檢驗項目', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                        Padding(padding: EdgeInsets.all(8), child: Text('數值/單位', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                        Padding(padding: EdgeInsets.all(8), child: Text('參考值/目標', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                      ],
+                    ),
+                    ...finding.labValues.map((lab) => TableRow(
+                      children: [
+                        Padding(padding: const EdgeInsets.all(8), child: Text(lab.testName, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w500))),
+                        Padding(padding: const EdgeInsets.all(8), child: Text('${lab.value} ${lab.unit ?? ""}', style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Colors.teal))),
+                        Padding(padding: const EdgeInsets.all(8), child: Text(lab.referenceRange ?? '-', style: const TextStyle(fontSize: 11, color: Colors.grey))),
+                      ],
+                    )),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+
+            // ICD Codes
+            if (finding.icdCodes.isNotEmpty) ...[
+              const Text('對應疾病分類編碼 (ICD-10-CM / PCS)：', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: finding.icdCodes.map((c) => Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.teal.shade900.withValues(alpha: 0.4) : Colors.teal.shade50,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.teal.shade300),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(color: Colors.teal, borderRadius: BorderRadius.circular(3)),
+                        child: Text(c.system, style: const TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(c.code, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.teal)),
+                      if (c.title.isNotEmpty) ...[
+                        const SizedBox(width: 4),
+                        Text(c.title, style: const TextStyle(fontSize: 11)),
+                      ],
+                    ],
+                  ),
+                )).toList(),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGraphifyPdfAcademicMetadataCard(Document doc, bool isDark) {
+    final rawAcademic = doc.metadata['academic_metadata'];
+    AcademicMetadata? academic;
+    if (rawAcademic != null) {
+      try {
+        academic = AcademicMetadata.fromMap(Map<String, dynamic>.from(rawAcademic));
+      } catch (_) {}
+    }
+    if (academic == null || academic.isEmpty) {
+      final fullText = _pages.map((p) => p.ocrText).join('\n');
+      if (fullText.isNotEmpty) {
+        academic = DocumentExtractionUtil.extractAcademicMetadata(fullText, title: doc.title);
+      }
+    }
+    if (academic == null || academic.isEmpty) return const SizedBox.shrink();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.school_outlined, color: Colors.indigo, size: 22),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    '學術元數據抓取 (GraphifyPDF)',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.indigo.withValues(alpha: 0.4)),
+                  ),
+                  child: const Text('學術論文', style: TextStyle(fontSize: 10.5, color: Colors.indigo, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+            const Divider(),
+
+            // Authors
+            if (academic.authors.isNotEmpty) ...[
+              _buildMetaRow('作者列表', academic.authors.join(', ')),
+            ],
+            // DOI
+            if (academic.doi != null && academic.doi!.isNotEmpty) ...[
+              _buildMetaRow('DOI 識別碼', academic.doi!),
+            ],
+            // Publication Year
+            if (academic.publicationYear != null) ...[
+              _buildMetaRow('出版年份', '${academic.publicationYear} 年'),
+            ],
+            // Journal
+            if (academic.journal != null && academic.journal!.isNotEmpty) ...[
+              _buildMetaRow('期刊 / 來源', academic.journal!),
+            ],
+            // Citations
+            if (academic.citations.isNotEmpty) ...[
+              _buildMetaRow('重要引用', academic.citations.join('\n')),
+            ],
+            // Keywords
+            if (academic.keywords.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: academic.keywords.map((k) => Chip(
+                    label: Text(k, style: const TextStyle(fontSize: 10.5)),
+                    visualDensity: VisualDensity.compact,
+                    backgroundColor: isDark ? Colors.indigo.shade900.withValues(alpha: 0.2) : Colors.indigo.shade50,
+                  )).toList(),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildKnowledgeRelationsCard(Document doc, bool isDark) {
+    final rawTriplets = doc.metadata['knowledge_triplets'];
+    final triplets = <KnowledgeTriplet>[];
+    if (rawTriplets is List) {
+      for (final r in rawTriplets) {
+        try {
+          triplets.add(KnowledgeTriplet.fromMap(Map<String, dynamic>.from(r)));
+        } catch (_) {}
+      }
+    }
+
+    final relatedDocs = _graphService.findRelatedDocuments(
+      targetDoc: doc,
+      allDocs: _allDocuments,
+      limit: 4,
+    );
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.hub, color: Colors.amber, size: 22),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    '知識網絡與跨文獻關聯 (llm-knowledge-graph)',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                ),
+                TextButton.icon(
+                  icon: const Icon(Icons.open_in_full, size: 14),
+                  label: const Text('開啟圖譜', style: TextStyle(fontSize: 12)),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => KnowledgeGraphScreen(
+                          repository: widget.repository,
+                          ollamaClient: widget.ollamaClient,
+                          focusDocId: doc.id,
+                          focusDocTitle: doc.title,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+            const Divider(),
+
+            // Triplets List
+            if (triplets.isNotEmpty) ...[
+              const Text('核心知識關係三元組 (Subject-Predicate-Object)：', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+              const SizedBox(height: 6),
+              ...triplets.take(5).map((t) => Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.amber.shade900.withValues(alpha: 0.15) : Colors.amber.shade50.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.amber.shade300.withValues(alpha: 0.6)),
+                ),
+                child: Row(
+                  children: [
+                    Text(t.subject, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade800,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          t.predicate,
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                    Icon(Icons.arrow_forward, size: 13, color: Colors.amber.shade800),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(t.object, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12), overflow: TextOverflow.ellipsis),
+                    ),
+                  ],
+                ),
+              )),
+              const SizedBox(height: 10),
+            ],
+
+            // Cross-Document Relations List
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('相關聯的多文獻資訊：', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+                Text('${relatedDocs.length} 篇關聯', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            if (relatedDocs.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('目前資料庫尚無其他與本文獻具備高關聯性之文獻', style: TextStyle(color: Colors.grey, fontSize: 12)),
+              )
+            else
+              ...relatedDocs.map((r) => Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF0F1523) : Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: isDark ? Colors.blueGrey.shade800 : Colors.grey.shade200),
+                ),
+                child: InkWell(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => DocumentDetailScreen(
+                          documentId: r.document.id,
+                          repository: widget.repository,
+                          ollamaClient: widget.ollamaClient,
+                        ),
+                      ),
+                    );
+                  },
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade700,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text('${r.scorePercent}% 關聯', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              r.document.title,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
+                        ],
+                      ),
+                      if (r.sharedIcdCodes.isNotEmpty || r.sharedEntities.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 4,
+                          runSpacing: 2,
+                          children: [
+                            ...r.sharedIcdCodes.map((icd) => Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(color: Colors.teal.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(3)),
+                              child: Text('共同 $icd', style: const TextStyle(fontSize: 10, color: Colors.teal, fontWeight: FontWeight.bold)),
+                            )),
+                            ...r.sharedEntities.take(3).map((e) => Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(3)),
+                              child: Text(e, style: const TextStyle(fontSize: 10, color: Colors.blue)),
+                            )),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              )),
+          ],
+        ),
       ),
     );
   }

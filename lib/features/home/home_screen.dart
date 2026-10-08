@@ -6,6 +6,7 @@ import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
 import 'package:smart_doc_search/features/document/document_detail_screen.dart';
+import 'package:smart_doc_search/features/graph/knowledge_graph_screen.dart';
 import 'package:smart_doc_search/features/import/import_screen.dart';
 import 'package:smart_doc_search/features/import/import_service.dart';
 
@@ -124,9 +125,24 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.hub_outlined),
+            tooltip: '開啟文獻知識圖譜視覺化',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => KnowledgeGraphScreen(
+                    repository: widget.repository,
+                    ollamaClient: widget.ollamaClient,
+                  ),
+                ),
+              );
+            },
+          ),
           // Ollama status chip
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Tooltip(
               message: _ollamaOnline == true
                   ? '${widget.ollamaClient.providerDisplayName} 在線 (${widget.ollamaClient.host})'

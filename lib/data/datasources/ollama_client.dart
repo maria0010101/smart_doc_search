@@ -4,12 +4,16 @@ import 'package:flutter/foundation.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/utils/text_normalizer.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
+import 'package:smart_doc_search/data/models/knowledge_graph_model.dart';
 
 /// Structured result of AI document analysis containing:
 /// - Categorized tags (medical terms, diseases/symptoms, ICD classification codes, etc.)
 /// - Full executive summary
 /// - Dedicated Chinese summary (for English / foreign literature to confirm target at a glance)
 /// - Detected language
+/// - Academic metadata (authors, doi, publication year, journal, citations) [GraphifyPDF]
+/// - Clinical findings (diagnoses, procedures, lab values, ICD codes) [RapidDoc]
+/// - Knowledge triplets (subject-predicate-object relations) [llm-knowledge-graph]
 class AiAnalysisResult {
   final List<TagItem> tags;
   final String summary;
@@ -18,6 +22,9 @@ class AiAnalysisResult {
   final List<String> medicalTerms;
   final List<String> diseasesAndSymptoms;
   final List<String> classificationCodes;
+  final AcademicMetadata? academicMetadata;
+  final ClinicalFinding? clinicalFinding;
+  final List<KnowledgeTriplet> knowledgeTriplets;
 
   AiAnalysisResult({
     required this.tags,
@@ -27,6 +34,9 @@ class AiAnalysisResult {
     this.medicalTerms = const [],
     this.diseasesAndSymptoms = const [],
     this.classificationCodes = const [],
+    this.academicMetadata,
+    this.clinicalFinding,
+    this.knowledgeTriplets = const [],
   });
 
   /// Best summary to display at top of detail view (prefer Chinese summary for Chinese readers)
@@ -736,6 +746,18 @@ class OllamaClient {
 【重大要求 3 - 標籤記錄原始文獻實質頁數，嚴格排除目錄頁】：
 - 標籤陣列中的每一個標籤物件，必須同時紀錄 "page_number"（整數，如 3 或 12），表示該標籤在原文中【主要實質探討或定義】的頁碼。
 - ⚠️【極重要 - 排除目錄頁與封面頁】：絕不能僅因該詞出現在第 1 頁目錄（Table of Contents）、標題頁或封面頁就標註為第 1 頁！必須紀錄實際章節內容展開討論的真實頁數！
+
+【重大要求 4 - 臨床數據與疾病分類結構化擷取 (參考 RapidDoc)】：
+- 抽取文獻中的臨床診斷、處置手術、檢驗數值與標準 ICD 代碼：
+  * principal_diagnosis: 主要診斷或病因
+  * secondary_diagnoses: 次要診斷或合併症清單
+  * procedures: 醫療處置、檢查、手術術式清單
+  * lab_values: 臨床檢驗指標與數值清單 (test_name, value, unit, reference_range)
+  * icd_codes: 明確或推論之 ICD-10-CM / ICD-10-PCS 編碼對應 (code, title, system)
+
+【重大要求 5 - 學術元數據與知識三元組關係抽取 (參考 GraphifyPDF 與 llm-knowledge-graph)】：
+- academic_metadata: 抽取作者 (authors)、DOI、出版年份 (publication_year)、期刊/發表來源 (journal)、重要引用 (citations)、關鍵字 (keywords)。
+- knowledge_triplets: 抽取核心實體之間的知識關係三元組（subject 主詞、predicate 關係如"導致併發"、"治療控制"、"表現為"、"對應編碼"、object 受詞）。
 $customPromptBlock
 請嚴格輸出合法的 JSON 格式，不要輸出任何額外文字：
 {
@@ -745,6 +767,29 @@ $customPromptBlock
   "medical_terms": ["醫學專有名詞1", "醫學專有名詞2"],
   "diseases_and_symptoms": ["疾病或症狀名稱1", "疾病或症狀名稱2"],
   "classification_codes": ["ICD-10/11編碼", "相關分類代碼"],
+  "academic_metadata": {
+    "authors": ["作者姓名1", "作者姓名2"],
+    "doi": "10.1000/xyz123",
+    "publication_year": 2024,
+    "journal": "期刊名稱或會議",
+    "citations": ["重要參考文獻1"],
+    "keywords": ["關鍵字1", "關鍵字2"]
+  },
+  "clinical_findings": {
+    "principal_diagnosis": "主要診斷名稱",
+    "secondary_diagnoses": ["次要診斷1", "次要診斷2"],
+    "procedures": ["手術處置1", "醫療處置2"],
+    "lab_values": [
+      {"test_name": "HbA1c", "value": "6.8", "unit": "%", "reference_range": "<7.0%"}
+    ],
+    "icd_codes": [
+      {"code": "E11.9", "title": "第2型糖尿病，無併發症", "system": "ICD-10-CM"}
+    ]
+  },
+  "knowledge_triplets": [
+    {"subject": "第2型糖尿病", "predicate": "引發併發症", "object": "心血管動脈硬化"},
+    {"subject": "SGLT2抑制劑", "predicate": "治療控制", "object": "第2型糖尿病"}
+  ],
   "tags": [
     {"name": "標籤名稱", "category": "疾病分類編碼", "code_system": "ICD-10-CM", "confidence": 0.95, "page_number": 3},
     {"name": "標籤名稱", "category": "疾病/症狀 或 醫學術語 或 主題", "confidence": 0.95, "page_number": 5}
@@ -787,12 +832,26 @@ $truncatedText
 【重大要求 3 - 標籤記錄原始文獻實質頁數，嚴格排除目錄頁】：
 - 標籤陣列中的每一個標籤物件，必須同時紀錄 "page_number"（整數，如 2 或 6），表示該標籤在原文中主要實質探討的頁碼。
 - ⚠️【極重要 - 排除目錄頁與封面頁】：絕不能僅因該詞出現在第 1 頁目錄或封面頁就標註為第 1 頁！
+
+【重大要求 4 - 學術元數據與知識關係三元組】：
+- 抽取 academic_metadata (authors, doi, publication_year, journal, citations, keywords) 與 knowledge_triplets (subject, predicate, object)。
 $customPromptBlock
 請嚴格輸出合法的 JSON 格式，不要輸出任何額外文字：
 {
   "detected_language": "en 或 zh",
   "summary": "• 【項目一】(P.1) 內文重點...\\n• 【項目二】(P.2) 內文重點...",
   "chinese_summary": "• 【項目一】(P.1) 繁體中文重點說明...\\n• 【項目二】(P.2) 繁體中文重點說明...",
+  "academic_metadata": {
+    "authors": ["作者姓名1", "作者姓名2"],
+    "doi": "10.1000/xyz123",
+    "publication_year": 2024,
+    "journal": "期刊名稱或會議",
+    "citations": ["重要參考文獻1"],
+    "keywords": ["關鍵字1", "關鍵字2"]
+  },
+  "knowledge_triplets": [
+    {"subject": "核心概念A", "predicate": "影響/應用於", "object": "應用領域B"}
+  ],
   "tags": [
     {"name": "標籤名稱", "category": "主題 或 領域 或 方法 或 結論", "confidence": 0.95, "page_number": 3}
   ]
@@ -895,6 +954,55 @@ $truncatedText
           }
         }
 
+        // 1. Parse Academic Metadata (GraphifyPDF)
+        AcademicMetadata? academicMeta;
+        if (parsed['academic_metadata'] is Map) {
+          try {
+            academicMeta = AcademicMetadata.fromMap(Map<String, dynamic>.from(parsed['academic_metadata']));
+          } catch (_) {}
+        }
+
+        // 2. Parse Clinical Findings (RapidDoc)
+        ClinicalFinding? clinicalFinding;
+        if (parsed['clinical_findings'] is Map) {
+          try {
+            clinicalFinding = ClinicalFinding.fromMap(Map<String, dynamic>.from(parsed['clinical_findings']));
+          } catch (_) {}
+        }
+
+        // Only if clinical findings was explicitly returned by AI, ensure those ICD codes exist in tags
+        if (clinicalFinding != null && clinicalFinding.isNotEmpty) {
+          for (final icd in clinicalFinding.icdCodes) {
+            if (!existingNames.contains(icd.code.toLowerCase())) {
+              existingNames.add(icd.code.toLowerCase());
+              parsedTags.add(TagItem(
+                id: 'med_c_${DateTime.now().microsecondsSinceEpoch}_${parsedTags.length}',
+                name: icd.code,
+                category: '疾病分類編碼',
+                codeSystem: icd.system,
+                confidence: 0.95,
+                source: 'ai_analysis',
+                pageNumber: icd.pageNumber,
+              ));
+            }
+          }
+        }
+
+        // 3. Parse Knowledge Triplets (llm-knowledge-graph)
+        final triplets = <KnowledgeTriplet>[];
+        if (parsed['knowledge_triplets'] is List) {
+          for (final item in parsed['knowledge_triplets']) {
+            if (item is Map) {
+              try {
+                final t = KnowledgeTriplet.fromMap(Map<String, dynamic>.from(item));
+                if (t.subject.isNotEmpty && t.object.isNotEmpty) {
+                  triplets.add(t);
+                }
+              } catch (_) {}
+            }
+          }
+        }
+
         return AiAnalysisResult(
           tags: parsedTags,
           summary: summary,
@@ -903,6 +1011,9 @@ $truncatedText
           medicalTerms: medTerms,
           diseasesAndSymptoms: diseases,
           classificationCodes: codes,
+          academicMetadata: academicMeta,
+          clinicalFinding: clinicalFinding,
+          knowledgeTriplets: triplets,
         );
       } else if (parsed is List) {
         final tags = _parseTagItems(parsed, source: 'ai_analysis');

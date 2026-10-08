@@ -8,11 +8,13 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart' as syncfusion;
 import 'package:smart_doc_search/core/constants/app_constants.dart';
+import 'package:smart_doc_search/core/utils/document_extraction_util.dart';
 import 'package:smart_doc_search/core/utils/hash_util.dart';
 import 'package:smart_doc_search/core/utils/tag_page_calibrator.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
+import 'package:smart_doc_search/data/models/knowledge_graph_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
 import 'package:uuid/uuid.dart';
 
@@ -305,6 +307,10 @@ class ImportService {
     String aiChineseSummary = '';
     String detectedLang = 'zh-TW';
 
+    AcademicMetadata? academicMeta;
+    ClinicalFinding? clinicalFinding;
+    List<KnowledgeTriplet> knowledgeTriplets = [];
+
     try {
       final analysis = await ollamaClient.generateAnalysis(
         text: '文獻標題：$title\n\n完整全文內容：\n$aggregatedFullText',
@@ -313,6 +319,20 @@ class ImportService {
       aiSummary = analysis.summary;
       aiChineseSummary = analysis.chineseSummary;
       detectedLang = analysis.detectedLanguage;
+      academicMeta = analysis.academicMetadata;
+      clinicalFinding = analysis.clinicalFinding;
+      knowledgeTriplets = analysis.knowledgeTriplets;
+
+      // 若 AI 抽取結果中某些結構欄位為空，透過端側正規表示式/啟發式對全文進行補強
+      if (academicMeta == null || academicMeta.isEmpty) {
+        academicMeta = DocumentExtractionUtil.extractAcademicMetadata(aggregatedFullText, title: title);
+      }
+      if (clinicalFinding == null || clinicalFinding.isEmpty) {
+        clinicalFinding = DocumentExtractionUtil.extractClinicalFindings(aggregatedFullText);
+      }
+      if (knowledgeTriplets.isEmpty) {
+        knowledgeTriplets = DocumentExtractionUtil.extractKnowledgeTriplets(aggregatedFullText);
+      }
     } catch (e) {
       debugPrint('AI analysis skipped or failed (offline mode active): $e');
       generatedTags = [
@@ -333,6 +353,11 @@ class ImportService {
           verified: false,
         ),
       ];
+
+      // 端側啟發式抽取備援
+      academicMeta = DocumentExtractionUtil.extractAcademicMetadata(aggregatedFullText, title: title);
+      clinicalFinding = DocumentExtractionUtil.extractClinicalFindings(aggregatedFullText);
+      knowledgeTriplets = DocumentExtractionUtil.extractKnowledgeTriplets(aggregatedFullText);
     }
 
     if (aiSummary.isEmpty) {
@@ -359,6 +384,25 @@ class ImportService {
     // 5. Save Document & Pages to KoreDB
     _emitProgress(fileName, ImportStage.savingToDb, 0.95, '儲存至 KoreDB 資料庫...');
     final now = DateTime.now().millisecondsSinceEpoch;
+    final metadataMap = <String, dynamic>{
+      'originalPath': filePath,
+      'extension': ext,
+      'fileSize': await file.length(),
+      'chineseSummary': aiChineseSummary,
+      'documentsCopyPath': effectiveFilePath,
+      'managedStoragePath': destFilePath,
+      'extractionMethod': (sourceType == 'text' || sourceType == 'pdf') ? 'native_text' : 'ocr',
+    };
+    if (academicMeta.isNotEmpty) {
+      metadataMap['academic_metadata'] = academicMeta.toMap();
+    }
+    if (clinicalFinding.isNotEmpty) {
+      metadataMap['clinical_findings'] = clinicalFinding.toMap();
+    }
+    if (knowledgeTriplets.isNotEmpty) {
+      metadataMap['knowledge_triplets'] = knowledgeTriplets.map((t) => t.toMap()).toList();
+    }
+
     final document = Document(
       id: docId,
       title: title,
@@ -372,15 +416,7 @@ class ImportService {
       tags: generatedTags,
       summary: aiSummary,
       embedding: embedding,
-      metadata: {
-        'originalPath': filePath,
-        'extension': ext,
-        'fileSize': await file.length(),
-        'chineseSummary': aiChineseSummary,
-        'documentsCopyPath': effectiveFilePath,
-        'managedStoragePath': destFilePath,
-        'extractionMethod': (sourceType == 'text' || sourceType == 'pdf') ? 'native_text' : 'ocr',
-      },
+      metadata: metadataMap,
     );
 
     await repository.saveDocument(document);

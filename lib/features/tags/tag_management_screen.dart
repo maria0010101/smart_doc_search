@@ -1,14 +1,17 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
+import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
+import 'package:smart_doc_search/features/graph/knowledge_graph_screen.dart';
 import 'package:uuid/uuid.dart';
 
 class TagManagementScreen extends StatefulWidget {
   final DocumentRepository repository;
+  final OllamaClient? ollamaClient;
 
-  const TagManagementScreen({super.key, required this.repository});
+  const TagManagementScreen({super.key, required this.repository, this.ollamaClient});
 
   @override
   State<TagManagementScreen> createState() => _TagManagementScreenState();
@@ -239,6 +242,21 @@ class _TagManagementScreenState extends State<TagManagementScreen> {
       appBar: AppBar(
         title: const Text('標籤管理', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.hub_outlined),
+            tooltip: '全庫知識圖譜視覺化',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => KnowledgeGraphScreen(
+                    repository: widget.repository,
+                    ollamaClient: widget.ollamaClient ?? OllamaClient(),
+                  ),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.add),
             tooltip: '新增標籤',

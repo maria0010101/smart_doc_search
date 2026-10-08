@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:smart_doc_search/core/services/knowledge_graph_service.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 import 'package:smart_doc_search/data/repositories/document_repository.dart';
 import 'package:smart_doc_search/features/document/document_detail_screen.dart';
+import 'package:smart_doc_search/features/graph/knowledge_graph_screen.dart';
 import 'package:smart_doc_search/features/search/hybrid_search_service.dart';
 import 'package:smart_doc_search/features/search/search_query_parser.dart';
 
@@ -29,9 +31,11 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchCtrl = TextEditingController();
+  final KnowledgeGraphService _graphService = KnowledgeGraphService();
   StreamSubscription? _dataSub;
 
   List<TagDefinition> _allTags = [];
+  List<Document> _allDocuments = [];
   final Set<String> _selectedTags = {};
   String _tagMode = 'AND'; // 'AND' | 'OR'
   bool _enableSemanticSearch = true;
@@ -67,8 +71,12 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Future<void> _loadTags() async {
     final tags = await widget.repository.getAllTags();
+    final docs = await widget.repository.getAllDocuments();
     if (mounted) {
-      setState(() => _allTags = tags);
+      setState(() {
+        _allTags = tags;
+        _allDocuments = docs;
+      });
     }
   }
 
@@ -176,6 +184,21 @@ class _SearchScreenState extends State<SearchScreen> {
                   label: const Text('重設篩選'),
                   onPressed: _clearAllFilters,
                 ),
+              IconButton(
+                icon: const Icon(Icons.hub_outlined),
+                tooltip: '開啟知識圖譜視覺化',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => KnowledgeGraphScreen(
+                        repository: widget.repository,
+                        ollamaClient: widget.ollamaClient,
+                      ),
+                    ),
+                  );
+                },
+              ),
               IconButton(
                 icon: const Icon(Icons.help_outline),
                 tooltip: '搜尋語法說明 (+ / -)',
@@ -900,6 +923,49 @@ class _SearchScreenState extends State<SearchScreen> {
 
               const SizedBox(height: 8),
 
+              const SizedBox(height: 8),
+
+              // Action Buttons: Related documents & Detail
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                    ),
+                    icon: const Icon(Icons.hub_outlined, size: 13, color: Colors.amber),
+                    label: const Text('🔗 關聯多文獻', style: TextStyle(fontSize: 11)),
+                    onPressed: () => _showRelatedDocumentsDialog(doc),
+                  ),
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                    ),
+                    icon: const Icon(Icons.article_outlined, size: 14),
+                    label: const Text('文獻詳情', style: TextStyle(fontSize: 11.5)),
+                    onPressed: () async {
+                      final targetPage = hit.pageNumber ?? (pageDisplay != null ? int.tryParse(pageDisplay) : null);
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (ctx) => DocumentDetailScreen(
+                            documentId: doc.id,
+                            repository: widget.repository,
+                            ollamaClient: widget.ollamaClient,
+                            initialPageNumber: targetPage,
+                          ),
+                        ),
+                      );
+                      _performSearch();
+                    },
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 6),
+
               // Footer Meta
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -914,6 +980,131 @@ class _SearchScreenState extends State<SearchScreen> {
                   ),
                   Icon(Icons.chevron_right, size: 18, color: Colors.grey.shade400),
                 ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showRelatedDocumentsDialog(Document doc) async {
+    final allDocs = _allDocuments.isNotEmpty ? _allDocuments : await widget.repository.getAllDocuments();
+    final related = _graphService.findRelatedDocuments(targetDoc: doc, allDocs: allDocs, limit: 6);
+
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Container(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.75),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.hub, color: Colors.amber, size: 26),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('跨文獻相關聯資訊 (llm-knowledge-graph)', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                        Text('與《${doc.title}》高度關聯之文獻', style: const TextStyle(fontSize: 12, color: Colors.grey), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (related.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(child: Text('目前資料庫尚無其他與本文獻具高度關聯之文獻', style: TextStyle(color: Colors.grey))),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: related.length,
+                    separatorBuilder: (context, index) => const Divider(height: 8),
+                    itemBuilder: (ctx, idx) {
+                      final r = related[idx];
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade700,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text('${r.scorePercent}%', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                        ),
+                        title: Text(r.document.title, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold), maxLines: 2, overflow: TextOverflow.ellipsis),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 4),
+                            Wrap(
+                              spacing: 4,
+                              runSpacing: 2,
+                              children: [
+                                ...r.sharedIcdCodes.map((icd) => Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                  decoration: BoxDecoration(color: Colors.teal.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(3)),
+                                  child: Text('共同 $icd', style: const TextStyle(fontSize: 9.5, color: Colors.teal, fontWeight: FontWeight.bold)),
+                                )),
+                                ...r.sharedEntities.take(3).map((e) => Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                  decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(3)),
+                                  child: Text(e, style: const TextStyle(fontSize: 9.5, color: Colors.blue)),
+                                )),
+                              ],
+                            ),
+                          ],
+                        ),
+                        trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => DocumentDetailScreen(
+                                documentId: r.document.id,
+                                repository: widget.repository,
+                                ollamaClient: widget.ollamaClient,
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.open_in_new, size: 16),
+                  label: const Text('開啟本篇之知識圖譜視覺化'),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => KnowledgeGraphScreen(
+                          repository: widget.repository,
+                          ollamaClient: widget.ollamaClient,
+                          focusDocId: doc.id,
+                          focusDocTitle: doc.title,
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ],
           ),
