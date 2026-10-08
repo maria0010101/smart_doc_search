@@ -20,7 +20,7 @@ enum AiProvider {
 
 class AppConstants {
   // App Version
-  static const String appVersion = '0.1.7';
+  static const String appVersion = '0.1.8';
 
   // Database & Native Channel
   static const String koredbChannel = 'com.smartdoc.search/koredb';
