@@ -1,3 +1,4 @@
+import 'package:smart_doc_search/core/utils/document_text.dart';
 import 'package:smart_doc_search/core/utils/text_normalizer.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
 
@@ -83,7 +84,14 @@ class TagPageCalibrator {
     if (pages.isEmpty) return aiSuggestedPage;
     if (pages.length == 1) return 1;
 
-    final normalizedKw = TextNormalizer.normalizeTag(keyword).toLowerCase();
+    final rawKeyword = DocumentText.searchable(keyword);
+    // Search phrases must retain their language for accurate page localization.
+    final hasRawKeyword = pages.any(
+      (p) => DocumentText.searchable(p.ocrText).contains(rawKeyword),
+    );
+    final normalizedKw = hasRawKeyword
+        ? rawKeyword
+        : DocumentText.searchable(TextNormalizer.normalizeTag(keyword));
     if (normalizedKw.isEmpty) return aiSuggestedPage;
 
     // 檢查第 1 頁（與第 2 頁）是否為目錄
@@ -104,7 +112,7 @@ class TagPageCalibrator {
 
     for (final page in pages) {
       final pNum = page.pageNumber;
-      final text = page.ocrText.toLowerCase();
+      final text = DocumentText.searchable(page.ocrText);
 
       final count = RegExp(RegExp.escape(normalizedKw), caseSensitive: false).allMatches(text).length;
 
@@ -115,7 +123,7 @@ class TagPageCalibrator {
 
         // 若出現在版面標題 (Title / Header)，大幅增加實質權重
         for (final block in page.layoutBlocks) {
-          if (block.text.toLowerCase().contains(normalizedKw)) {
+          if (DocumentText.searchable(block.text).contains(normalizedKw)) {
             if (block.type == 'title' || block.type == 'header') {
               score += 6;
             }

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:smart_doc_search/core/utils/document_text.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/utils/tag_page_calibrator.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
@@ -231,7 +232,7 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
     for (final doc in candidates) {
       final docPages = _fallbackPages[doc.id] ?? [];
       final body =
-          '${doc.title} ${doc.summary} ${docPages.map((p) => p.ocrText).join(' ')}'.toLowerCase();
+          DocumentText.searchable('${doc.title} ${doc.summary} ${docPages.map((p) => p.ocrText).join(' ')}');
 
       // AND (+) / NOT (-) operator gates.
       if (constrainByText && !keywordSet.matchesGates(body)) continue;
@@ -315,7 +316,7 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
     if (terms.isEmpty || haystackLower.isEmpty) return 0.0;
     var score = 0.0;
     for (final rawTerm in terms) {
-      final term = rawTerm.toLowerCase().trim();
+      final term = DocumentText.searchable(rawTerm);
       if (term.isEmpty) continue;
       var count = 0;
       var index = 0;
@@ -335,9 +336,10 @@ class KoreDbNativeDataSource implements KoreDbDataSource {
   /// original text casing.
   static String? _keywordSnippet(String text, List<String> keywords) {
     if (text.isEmpty) return null;
-    final lower = text.toLowerCase();
+    text = DocumentText.searchContent(text);
+    final lower = DocumentText.searchable(text);
     for (final rawKeyword in keywords) {
-      final keyword = rawKeyword.toLowerCase().trim();
+      final keyword = DocumentText.searchable(rawKeyword);
       if (keyword.isEmpty) continue;
       final index = lower.indexOf(keyword);
       if (index != -1) {

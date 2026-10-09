@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:smart_doc_search/core/utils/document_text.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
 import 'package:smart_doc_search/data/datasources/ollama_client.dart';
 import 'package:smart_doc_search/data/models/document_model.dart';
@@ -40,6 +41,8 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
   final TextEditingController _filterCtrl = TextEditingController();
   StreamSubscription? _dataSub;
   List<Document> _allDocuments = [];
+  Map<String, String> _searchBodies = {};
+  int _loadGeneration = 0;
   List<Document> _filteredDocuments = [];
   bool _isLoading = true;
   DocumentSortOption _sortOption = DocumentSortOption.newestUpdated;
@@ -68,10 +71,20 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
     if (showLoading && _allDocuments.isEmpty) {
       setState(() => _isLoading = true);
     }
+    final generation = ++_loadGeneration;
     final docs = await widget.repository.getAllDocuments();
+    final bodies = <String, String>{};
+    for (final doc in docs) {
+      final pages = await widget.repository.getDocumentPages(doc.id);
+      bodies[doc.id] = DocumentText.searchable(
+        '${doc.title} ${doc.summary} ${doc.tags.map((t) => t.name).join(' ')} ${pages.map((p) => p.ocrText).join(' ')}',
+      );
+    }
+    if (generation != _loadGeneration) return;
     if (mounted) {
       setState(() {
         _allDocuments = docs;
+        _searchBodies = bodies;
         _applyFilterAndSort();
         _isLoading = false;
 
@@ -88,12 +101,10 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
   }
 
   void _applyFilterAndSort() {
-    final query = _filterCtrl.text.trim().toLowerCase();
+    final query = DocumentText.searchable(_filterCtrl.text);
     List<Document> list = _allDocuments.where((doc) {
       final matchesQuery = query.isEmpty ||
-          doc.title.toLowerCase().contains(query) ||
-          doc.summary.toLowerCase().contains(query) ||
-          doc.tags.any((t) => t.name.toLowerCase().contains(query));
+          (_searchBodies[doc.id] ?? '').contains(query);
 
       final matchesCategory = _selectedCategory == null ||
           doc.tags.any((t) => t.category == _selectedCategory);
@@ -397,7 +408,7 @@ class _DocumentListScreenState extends State<DocumentListScreen> {
           TextField(
             controller: _filterCtrl,
             decoration: InputDecoration(
-              hintText: '搜尋文獻標題、摘要、標籤...',
+              hintText: '搜尋文獻標題、摘要、標籤、全文...',
               prefixIcon: const Icon(Icons.search, size: 20),
               suffixIcon: _filterCtrl.text.isNotEmpty
                   ? IconButton(

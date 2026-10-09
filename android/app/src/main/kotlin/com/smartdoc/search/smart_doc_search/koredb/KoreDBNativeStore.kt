@@ -334,12 +334,19 @@ class KoreDBNativeStore(private val context: Context) {
     /**
      * BM25 Fulltext Keyword Match Score
      */
+    private fun reflowText(text: String): String = text
+        .replace(Regex("[\\r\\n]+"), "\n")
+        .replace(Regex("([\\u3400-\\u9fff\\uf900-\\ufaff])[ \\t]*\\n[ \\t]*(?=[\\u3400-\\u9fff\\uf900-\\ufaff])"), "$1")
+        .replace(Regex("\\s+"), " ").trim()
+
+    private fun searchText(text: String): String = reflowText(text).lowercase(java.util.Locale.ROOT)
+
     fun bm25Score(docText: String, terms: List<String>): Float {
         if (terms.isEmpty() || docText.isBlank()) return 0f
-        val lowerText = docText.lowercase()
+        val lowerText = searchText(docText)
         var score = 0f
         for (term in terms) {
-            val lowerTerm = term.lowercase().trim()
+            val lowerTerm = searchText(term)
             if (lowerTerm.isEmpty()) continue
             // Simple term frequency calculation
             var count = 0
@@ -439,20 +446,20 @@ class KoreDBNativeStore(private val context: Context) {
             val summary = doc.optString("summary", "")
             val pageTexts = pages[docId]?.joinToString(" ") { it.optString("ocrText", "") } ?: ""
             val fullText = "$title $summary $pageTexts"
-            val fullTextLower = fullText.lowercase()
+            val fullTextLower = searchText(fullText)
 
             // AND (+) / NOT (-) operator gates
             if (constrainByText) {
                 var gatesPassed = true
                 for (term in requiredKeywords) {
-                    if (!fullTextLower.contains(term.lowercase())) {
+                    if (!fullTextLower.contains(searchText(term))) {
                         gatesPassed = false
                         break
                     }
                 }
                 if (gatesPassed) {
                     for (term in excludedKeywords) {
-                        if (fullTextLower.contains(term.lowercase())) {
+                        if (fullTextLower.contains(searchText(term))) {
                             gatesPassed = false
                             break
                         }
@@ -499,13 +506,15 @@ class KoreDBNativeStore(private val context: Context) {
             if (!noQuery && !exclusionOnly && totalScore <= 0f) continue
 
             // Build highlight snippet if keyword matched (original casing kept)
+            val snippetText = reflowText(fullText)
             var highlightSnippet: String? = null
             for (kw in positiveKeywords) {
-                val idx = fullText.indexOf(kw, ignoreCase = true)
+                val snippetKeyword = reflowText(kw)
+                val idx = snippetText.indexOf(snippetKeyword, ignoreCase = true)
                 if (idx != -1) {
                     val start = maxOf(0, idx - 40)
-                    val end = minOf(fullText.length, idx + kw.length + 40)
-                    highlightSnippet = "..." + fullText.substring(start, end).trim() + "..."
+                    val end = minOf(snippetText.length, idx + snippetKeyword.length + 40)
+                    highlightSnippet = "..." + snippetText.substring(start, end).trim() + "..."
                     break
                 }
             }

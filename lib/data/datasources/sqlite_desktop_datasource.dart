@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:smart_doc_search/core/utils/document_text.dart';
 import 'package:smart_doc_search/core/constants/app_constants.dart';
 import 'package:smart_doc_search/core/utils/tag_page_calibrator.dart';
 import 'package:smart_doc_search/data/datasources/koredb_datasource.dart';
@@ -366,7 +367,7 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
 
     final scored = <DocumentHit>[];
     for (final doc in candidates) {
-      final body = bodies[doc.id] ?? ('${doc.title} ${doc.summary}').toLowerCase();
+      final body = bodies[doc.id] ?? DocumentText.searchable('${doc.title} ${doc.summary}');
 
       // AND (+) / NOT (-) operator gates.
       if (constrainByText && !keywordSet.matchesGates(body)) continue;
@@ -526,9 +527,10 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
 
   static String? _snippetFromText(String text, List<String> keywords) {
     if (text.isEmpty) return null;
-    final lower = text.toLowerCase();
+    text = DocumentText.searchContent(text);
+    final lower = DocumentText.searchable(text);
     for (final rawKeyword in keywords) {
-      final keyword = rawKeyword.toLowerCase().trim();
+      final keyword = DocumentText.searchable(rawKeyword);
       if (keyword.isEmpty) continue;
       final index = lower.indexOf(keyword);
       if (index != -1) {
@@ -546,7 +548,7 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
     if (terms.isEmpty || haystackLower.isEmpty) return 0.0;
     var score = 0.0;
     for (final rawTerm in terms) {
-      final term = rawTerm.toLowerCase().trim();
+      final term = DocumentText.searchable(rawTerm);
       if (term.isEmpty) continue;
       var count = 0;
       var index = 0;
@@ -610,7 +612,7 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
     }
     await db.insert(
       'doc_index',
-      {'doc_id': docId, 'body': body.toString().toLowerCase()},
+      {'doc_id': docId, 'body': DocumentText.searchable(body.toString())},
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
     _dirtyDocIds.remove(docId);
@@ -643,7 +645,7 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
       buffers.forEach((id, buffer) {
         batch.insert(
           'doc_index',
-          {'doc_id': id, 'body': buffer.toString().toLowerCase()},
+          {'doc_id': id, 'body': DocumentText.searchable(buffer.toString())},
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       });
@@ -687,7 +689,7 @@ class SqliteDesktopDataSource implements KoreDbDataSource {
         slice,
       );
       for (final row in rows) {
-        bodies[row['doc_id'] as String] = (row['body'] ?? '') as String;
+        bodies[row['doc_id'] as String] = DocumentText.searchable((row['body'] ?? '') as String);
       }
     }
     return bodies;

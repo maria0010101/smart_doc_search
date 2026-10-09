@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:smart_doc_search/core/utils/document_text.dart';
 import 'package:smart_doc_search/core/services/knowledge_graph_service.dart';
 import 'package:smart_doc_search/core/theme/app_theme.dart';
 import 'package:smart_doc_search/core/utils/document_extraction_util.dart';
@@ -554,8 +555,9 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
   /// 計算搜尋關鍵字在文字中出現的次數（不區分大小寫）
   int _countOccurrences(String text, String query) {
     if (query.isEmpty || text.isEmpty) return 0;
-    final lowerText = text.toLowerCase();
-    final lowerQuery = query.toLowerCase();
+    final lowerText = DocumentText.searchable(text);
+    final lowerQuery = DocumentText.searchable(query);
+    if (lowerQuery.isEmpty) return 0;
     int count = 0;
     int start = 0;
     while (true) {
@@ -570,11 +572,11 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
   /// 取得包含搜尋關鍵字的所有頁碼清單
   List<int> get _pagesWithSearchMatches {
     if (_inDocSearchQuery.isEmpty) return const [];
-    final q = _inDocSearchQuery.toLowerCase();
+    final q = DocumentText.searchable(_inDocSearchQuery);
     final list = <int>[];
     for (final p in _pages) {
-      if (p.ocrText.toLowerCase().contains(q) ||
-          p.layoutBlocks.any((b) => b.text.toLowerCase().contains(q))) {
+      if (DocumentText.searchable(p.ocrText).contains(q) ||
+          p.layoutBlocks.any((b) => DocumentText.searchable(b.text).contains(q))) {
         list.add(p.pageNumber);
       }
     }
@@ -621,12 +623,14 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     required TextStyle highlightStyle,
   }) {
     if (query.isEmpty || text.isEmpty) {
-      return [TextSpan(text: text, style: normalStyle)];
+      return [TextSpan(text: DocumentText.reflow(text), style: normalStyle)];
     }
 
+    text = DocumentText.reflow(text).replaceAll(RegExp(r'[ \t]+'), ' ');
     final spans = <TextSpan>[];
     final lowerText = text.toLowerCase();
-    final lowerQuery = query.toLowerCase();
+    final lowerQuery = DocumentText.searchable(query);
+    if (lowerQuery.isEmpty) return [TextSpan(text: DocumentText.reflow(text), style: normalStyle)];
 
     int start = 0;
     while (true) {
@@ -643,11 +647,11 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
       }
 
       spans.add(TextSpan(
-        text: text.substring(index, index + query.length),
+        text: text.substring(index, index + lowerQuery.length),
         style: highlightStyle,
       ));
 
-      start = index + query.length;
+      start = index + lowerQuery.length;
     }
 
     return spans;
@@ -1121,7 +1125,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
     final hasImage = page.imagePath.isNotEmpty && File(page.imagePath).existsSync();
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // Image Preview (if available)
         if (hasImage) ...[
@@ -1170,7 +1174,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
                   children: [
@@ -1243,7 +1247,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const Text('版面結構分析區塊：', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                   const SizedBox(height: 8),
@@ -1311,7 +1315,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
@@ -1349,7 +1353,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> with Single
                   ),
                 ),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,

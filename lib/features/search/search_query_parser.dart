@@ -16,6 +16,8 @@
 /// between two Han characters, or when the same token also uses `+`.
 library;
 
+import 'package:smart_doc_search/core/utils/document_text.dart';
+
 /// Parsed representation of a user query, split into the three keyword groups.
 class ParsedSearchQuery {
   /// Keywords that must all be present in a matching document (AND group).
@@ -188,10 +190,10 @@ class EncodedKeywordSet {
   /// True when [haystack] (already lower-cased) satisfies the AND / NOT gates.
   bool matchesGates(String haystackLower) {
     for (final term in required) {
-      if (!haystackLower.contains(term.toLowerCase())) return false;
+      if (!haystackLower.contains(DocumentText.searchable(term))) return false;
     }
     for (final term in excluded) {
-      if (haystackLower.contains(term.toLowerCase())) return false;
+      if (haystackLower.contains(DocumentText.searchable(term))) return false;
     }
     return true;
   }
